@@ -23,9 +23,11 @@ TELEGRAM_BOT_TOKEN=<BotFather-tokeni>
 TELEGRAM_MODE=webhook
 TELEGRAM_WEBHOOK_SECRET=<tasodifiy-secret>
 TELEGRAM_ADMIN_IDS=<vergul-bilan-numeric-idlar>
+BOT_PRIVATE_MODE=true
+OWNER_TELEGRAM_ID=<raqamli-owner-id>
 ADMIN_API_TOKEN=<tasodifiy-admin-token>
 
-AI_PROVIDER=openai_compatible
+AI_PROVIDER=openai
 AI_BASE_URL=https://api.openai.com/v1
 AI_API_KEY=<api-key>
 AI_MODEL=<providerdagi-real-model>

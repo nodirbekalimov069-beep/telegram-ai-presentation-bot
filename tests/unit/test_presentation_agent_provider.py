@@ -55,6 +55,7 @@ async def test_provider_runs_presentation_agent_with_trusted_backend_context() -
     assert reply.stage == "collecting"
     assert reply.missing_fields == ["slide_count", "audience"]
     sent = json.loads(route.calls[0].request.content)
+    assert sent["response_format"] == {"type": "json_object"}
     assert len(sent["messages"]) == 3
     assert user_text not in sent["messages"][0]["content"]
     assert json.loads(sent["messages"][1]["content"])["free_demo_available"] is False

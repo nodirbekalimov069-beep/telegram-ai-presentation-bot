@@ -11,7 +11,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 from core.config import Settings
-from modules.ai.factory import build_ai_provider
+from modules.ai.factory import build_ai_provider, close_ai_provider
 from modules.files.factory import build_storage
 from modules.files.storage import LocalStorage
 from modules.orders.models import Order
@@ -297,16 +297,19 @@ class QuickPresentationService:
                 )
             order_id = order.id
 
-        async with session_factory() as session:
-            presentation = await PresentationService(
-                ai_provider=build_ai_provider(self._settings)
-            ).generate_outline(session, order_id=order_id)
-            presentation_id = presentation.id
+        provider = build_ai_provider(self._settings)
+        try:
+            async with session_factory() as session:
+                presentation = await PresentationService(ai_provider=provider).generate_outline(
+                    session,
+                    order_id=order_id,
+                )
+                presentation_id = presentation.id
+        finally:
+            await close_ai_provider(provider)
 
         async with session_factory() as session:
-            await PresentationService(
-                ai_provider=build_ai_provider(self._settings)
-            ).approve_outline(session, presentation_id=presentation_id)
+            await PresentationService().approve_outline(session, presentation_id=presentation_id)
 
         storage = build_storage(self._settings)
         if not isinstance(storage, LocalStorage):

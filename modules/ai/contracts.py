@@ -26,6 +26,7 @@ class PresentationRequest(BaseModel):
 
 
 NonEmptyText = Annotated[str, Field(min_length=1)]
+SlideBullet = Annotated[str, Field(min_length=1, max_length=180)]
 TableCell = str | int | float | bool
 TableRow = Annotated[list[TableCell], Field(min_length=1, max_length=8)]
 
@@ -90,10 +91,7 @@ class OutlineSwotLayout(BaseModel):
     threats: list[NonEmptyText] = Field(min_length=1, max_length=5)
 
 
-OutlineSpecialLayout = Annotated[
-    OutlineSequenceLayout | OutlineSwotLayout,
-    Field(discriminator="type"),
-]
+OutlineSpecialLayout = OutlineSequenceLayout | OutlineSwotLayout
 
 
 class OutlineSlide(BaseModel):
@@ -102,7 +100,7 @@ class OutlineSlide(BaseModel):
     number: int = Field(ge=1, le=30)
     title: str = Field(min_length=2, max_length=120)
     purpose: str = Field(min_length=2, max_length=300)
-    key_points: list[str] = Field(min_length=1, max_length=6)
+    key_points: list[SlideBullet] = Field(min_length=1, max_length=6)
     visual_type: str = Field(min_length=2, max_length=40)
     layout: str = Field(min_length=2, max_length=50)
     sources: list[str] = Field(default_factory=list, max_length=8)
@@ -118,6 +116,10 @@ class OutlineSlide(BaseModel):
             raise ValueError("table is limited to five rows when sharing a slide with a chart")
         if self.table is not None and self.special_layout is not None and len(self.table.rows) > 5:
             raise ValueError("table is limited to five rows when sharing a slide with a layout")
+        normalized_title = " ".join(self.title.casefold().split())
+        normalized_points = {" ".join(point.casefold().split()) for point in self.key_points}
+        if normalized_title in normalized_points:
+            raise ValueError("slide title must not be repeated as a key point")
         return self
 
 

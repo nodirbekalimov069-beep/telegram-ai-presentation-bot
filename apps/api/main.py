@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from apps.api.routes import admin, health, payments, plans, telegram
-from apps.bot.main import build_dispatcher
+from apps.bot.main import build_dispatcher, validate_runtime_credentials
 from core.config import Settings, get_settings
 from core.database.session import create_engine, create_session_factory
 from core.logging import configure_logging
@@ -30,6 +30,7 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         configure_logging(debug=resolved_settings.debug)
         if resolved_settings.telegram_mode == "webhook":
+            validate_runtime_credentials(resolved_settings)
             from aiogram import Bot
 
             bot = Bot(token=resolved_settings.telegram_bot_token.get_secret_value())

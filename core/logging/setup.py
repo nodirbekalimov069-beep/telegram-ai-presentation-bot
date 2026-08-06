@@ -24,6 +24,8 @@ def redact_secrets(
 
 def configure_logging(*, debug: bool = False) -> None:
     logging.basicConfig(stream=sys.stdout, level=logging.DEBUG if debug else logging.INFO)
+    for logger_name in ("openai", "httpx", "httpcore"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

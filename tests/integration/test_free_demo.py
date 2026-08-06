@@ -6,10 +6,20 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from core.database.base import Base
+from modules.ai.contracts import Outline, PresentationRequest
+from modules.ai.providers.base import AIProvider
+from modules.orders.domain import OrderStatus
 from modules.orders.models import Order
 from modules.plans.models import Plan
+from modules.presentations.service import PresentationService
 from modules.users.models import FreeDemoClaim, User
 from modules.users.service import FreeDemoService, FreeDemoUnavailable
+
+
+class FailingOutlineProvider(AIProvider):
+    async def generate_outline(self, request: PresentationRequest) -> Outline:
+        del request
+        raise TimeoutError("provider timeout")
 
 
 @pytest.fixture
@@ -112,3 +122,67 @@ async def test_reserved_demo_is_consumed_when_generation_starts(
         user = await session.scalar(select(User).where(User.telegram_user_id == 123456789))
     assert claim is not None and claim.status == "CONSUMED"
     assert user is not None and user.free_demo_used is True
+
+
+@pytest.mark.asyncio
+async def test_private_owner_test_is_repeatable_and_does_not_touch_demo_ledger(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session, session.begin():
+        user = await session.scalar(
+            select(User).where(User.telegram_user_id == 123456789).with_for_update()
+        )
+        assert user is not None
+        user.free_demo_used = True
+
+    service = FreeDemoService()
+    for topic in ("AI ta’limda", "AI ta’limda qayta test"):
+        async with session_factory() as session:
+            order = await service.claim(
+                session,
+                telegram_user_id=123456789,
+                topic=topic,
+                settings={"slide_count": 10, "language": "uz"},
+                private_owner_test=True,
+            )
+            assert order.amount == 0
+
+    async with session_factory() as session:
+        order_count = await session.scalar(select(func.count(Order.id)))
+        claim_count = await session.scalar(select(func.count(FreeDemoClaim.id)))
+        used = await session.scalar(
+            select(User.free_demo_used).where(User.telegram_user_id == 123456789)
+        )
+    assert order_count == 2
+    assert claim_count == 0
+    assert used is True
+
+
+@pytest.mark.asyncio
+async def test_outline_failure_releases_reserved_demo_for_retry(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        order = await FreeDemoService().claim(
+            session,
+            telegram_user_id=123456789,
+            topic="AI ta’limda",
+            settings={"slide_count": 8, "language": "uz"},
+        )
+
+    async with session_factory() as session:
+        with pytest.raises(TimeoutError, match="provider timeout"):
+            await PresentationService(ai_provider=FailingOutlineProvider()).generate_outline(
+                session,
+                order_id=order.id,
+            )
+
+    async with session_factory() as session:
+        saved_order = await session.get(Order, order.id)
+        claim = await session.scalar(
+            select(FreeDemoClaim).where(FreeDemoClaim.order_id == order.id)
+        )
+        user = await session.scalar(select(User).where(User.telegram_user_id == 123456789))
+    assert saved_order is not None and saved_order.status == OrderStatus.FAILED
+    assert claim is not None and claim.status == "RELEASED"
+    assert user is not None and user.free_demo_used is False

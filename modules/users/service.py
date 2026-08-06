@@ -61,13 +61,18 @@ class FreeDemoService:
         telegram_user_id: int,
         topic: str,
         settings: dict[str, Any],
+        private_owner_test: bool = False,
     ) -> Order:
         try:
             async with session.begin():
                 user = await session.scalar(
                     select(User).where(User.telegram_user_id == telegram_user_id).with_for_update()
                 )
-                if user is None or user.is_blocked or user.free_demo_used:
+                if (
+                    user is None
+                    or user.is_blocked
+                    or (user.free_demo_used and not private_owner_test)
+                ):
                     raise FreeDemoUnavailable("Free Demo is unavailable for this Telegram user")
 
                 plan = await session.scalar(
@@ -76,8 +81,23 @@ class FreeDemoService:
                 if plan is None:
                     raise FreeDemoUnavailable("Free Demo plan is disabled")
                 slide_count = int(settings.get("slide_count", 0))
-                if not plan.minimum_slides <= slide_count <= plan.maximum_slides:
+                maximum_slides = 30 if private_owner_test else plan.maximum_slides
+                if not plan.minimum_slides <= slide_count <= maximum_slides:
                     raise FreeDemoUnavailable("requested slide count violates Free Demo limits")
+
+                if private_owner_test:
+                    order = Order(
+                        user_id=user.id,
+                        plan_id=plan.id,
+                        amount=0,
+                        currency="UZS",
+                        status=OrderStatus.CREATED,
+                        topic=topic,
+                        settings=settings,
+                    )
+                    session.add(order)
+                    await session.flush()
+                    return order
 
                 claim = await session.scalar(
                     select(FreeDemoClaim)

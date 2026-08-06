@@ -146,3 +146,47 @@ def test_chart_series_length_must_match_categories() -> None:
 
     with pytest.raises(AIContractError, match="invalid outline contract"):
         parse_outline(raw, expected_slide_count=1)
+
+
+def test_outline_rejects_overlong_slide_bullet() -> None:
+    raw = json.dumps(
+        {
+            "title": "AI asoslari",
+            "slides": [
+                {
+                    "number": 1,
+                    "title": "Kirish",
+                    "purpose": "Mavzuni tanishtirish",
+                    "key_points": ["x" * 181],
+                    "visual_type": "title",
+                    "layout": "cover",
+                    "sources": [],
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(AIContractError, match="invalid outline contract"):
+        parse_outline(raw, expected_slide_count=1)
+
+
+def test_outline_rejects_slide_title_repeated_as_bullet() -> None:
+    raw = json.dumps(
+        {
+            "title": "AI asoslari",
+            "slides": [
+                {
+                    "number": 1,
+                    "title": "Ta'limdagi imkoniyatlar",
+                    "purpose": "Mavzuni tanishtirish",
+                    "key_points": ["  TA'LIMDAGI IMKONIYATLAR  "],
+                    "visual_type": "title",
+                    "layout": "cover",
+                    "sources": [],
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(AIContractError, match="invalid outline contract"):
+        parse_outline(raw, expected_slide_count=1)

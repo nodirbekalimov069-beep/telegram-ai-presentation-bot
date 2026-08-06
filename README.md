@@ -6,7 +6,8 @@ Telegram orqali mavzu qabul qilib, AI-generated structured outline, tahrirlanadi
 
 - `uz`, `ru`, `en` lokalizatsiyasi va aiogram FSM;
 - `telegram_user_id` bo‘yicha bir martalik Free Demo;
-- OpenAI-compatible structured JSON outline, timeout va bounded retry;
+- official async OpenAI SDK, strict structured outline, timeout va bounded retry;
+- default owner-only private test gate;
 - outline preview, regenerate va approve;
 - PostgreSQL transactional outbox va Redis/Dramatiq worker;
 - editable 16:9 PPTX, LibreOffice PDF va structural QA;
@@ -19,28 +20,32 @@ Telegram orqali mavzu qabul qilib, AI-generated structured outline, tahrirlanadi
 Talab: Docker Desktop/Engine va Compose plugin.
 
 ```bash
-cp .env.example .env
+test -f .env || cp .env.example .env
 ```
 
-`.env` ichida kamida quyidagini kiriting:
+Command mavjud `.env` faylini overwrite qilmaydi.
+
+`.env` ichida quyidagi uch qiymatni kiriting:
 
 ```dotenv
 TELEGRAM_BOT_TOKEN=<BotFather tokeni>
-```
-
-Real AI uchun:
-
-```dotenv
-AI_PROVIDER=openai_compatible
-AI_BASE_URL=https://api.openai.com/v1
+OWNER_TELEGRAM_ID=<raqamli Telegram ID>
 AI_API_KEY=<API kalit>
-AI_MODEL=gpt-4.1-mini
 ```
+
+`.env.example`da `BOT_PRIVATE_MODE=true`, `AI_PROVIDER=openai` va
+`AI_MODEL=gpt-4.1-mini` oldindan sozlangan. Batafsil, sodda yo‘riqnoma:
+[Private Telegram test](docs/PRIVATE_TEST.md).
 
 So‘ng:
 
 ```bash
-docker compose up -d --build
+docker compose up --build
+```
+
+Boshqa terminalda holatni tekshirish:
+
+```bash
 docker compose ps
 curl --fail http://localhost:8000/health/live
 curl --fail http://localhost:8000/health/ready
@@ -116,6 +121,7 @@ docker compose run --rm migrate alembic current
 ## Hujjatlar
 
 - [Production deployment](docs/deployment.md)
+- [Owner-only private Telegram test](docs/PRIVATE_TEST.md)
 - [Backup va restore](docs/backup-restore.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Arxitektura va implementation rejasi](docs/implementation-plan.md)

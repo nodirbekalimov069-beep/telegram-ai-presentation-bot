@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, computed_field, model_validator
+from pydantic import Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,8 +32,10 @@ class Settings(BaseSettings):
     telegram_webhook_secret: SecretStr = SecretStr("")
     telegram_admin_ids: str = ""
     admin_api_token: SecretStr = SecretStr("")
+    bot_private_mode: bool = True
+    owner_telegram_id: int | None = None
 
-    ai_provider: Literal["mock", "openai_compatible"] = "mock"
+    ai_provider: Literal["mock", "openai", "openai_compatible"] = "mock"
     ai_base_url: str = "https://api.openai.com/v1"
     ai_api_key: SecretStr = SecretStr("")
     ai_model: str = "gpt-4.1-mini"
@@ -65,6 +67,13 @@ class Settings(BaseSettings):
     max_topic_length: int = Field(default=500, ge=20, le=2000)
     max_upload_bytes: int = Field(default=20_000_000, ge=1_000_000)
     generation_max_retries: int = Field(default=3, ge=0, le=10)
+
+    @field_validator("owner_telegram_id", mode="before")
+    @classmethod
+    def normalize_blank_owner_id(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @computed_field  # type: ignore[prop-decorator]
     @property

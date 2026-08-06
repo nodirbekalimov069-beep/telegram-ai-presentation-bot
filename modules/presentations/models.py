@@ -3,7 +3,16 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -59,6 +68,8 @@ class GenerationJob(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(32), index=True)
     progress: Mapped[int] = mapped_column(Integer, default=0)
     current_step: Mapped[str] = mapped_column(String(120))
+    progress_chat_id: Mapped[int | None] = mapped_column(BigInteger)
+    progress_message_id: Mapped[int | None] = mapped_column(BigInteger)
     retries: Mapped[int] = mapped_column(Integer, default=0)
     priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
     error_message: Mapped[str | None] = mapped_column(Text)

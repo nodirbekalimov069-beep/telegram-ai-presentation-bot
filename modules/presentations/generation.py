@@ -1,6 +1,8 @@
 """Idempotent background presentation generation pipeline."""
 
+import logging
 import tempfile
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -23,6 +25,9 @@ from modules.presentations.models import GenerationAttempt, GenerationJob, Prese
 from modules.presentations.pdf import validate_pdf
 from modules.users.models import FreeDemoClaim, User
 
+logger = logging.getLogger(__name__)
+ProgressCallback = Callable[[int, str], Awaitable[None]]
+
 
 class PdfConverter(Protocol):
     async def convert(self, pptx_path: Path, output_pdf: Path) -> Path: ...
@@ -33,7 +38,15 @@ class GenerationQualityError(RuntimeError):
 
 
 class GenerationLeaseLost(RuntimeError):
-    pass
+    """Raised when a stale generation attempt loses its fencing token."""
+
+
+class GenerationLeaseActive(RuntimeError):
+    """Raised when another worker still owns a non-expired generation lease."""
+
+    def __init__(self, *, retry_after_ms: int) -> None:
+        super().__init__("generation is already owned by an active worker lease")
+        self.retry_after_ms = max(1_000, retry_after_ms)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +78,7 @@ class GenerationPipeline:
         session_factory: async_sessionmaker[AsyncSession],
         *,
         presentation_id: int,
+        progress_callback: ProgressCallback | None = None,
     ) -> GenerationResult:
         lease_token = uuid4().hex
         async with session_factory() as session, session.begin():
@@ -99,11 +113,8 @@ class GenerationPipeline:
             if lease_expires_at is not None and lease_expires_at.tzinfo is None:
                 lease_expires_at = lease_expires_at.replace(tzinfo=UTC)
             if job.status == "RUNNING" and lease_expires_at is not None and lease_expires_at > now:
-                return GenerationResult(
-                    presentation_id=presentation.id,
-                    completed=False,
-                    pptx_storage_key="",
-                    pdf_storage_key="",
+                raise GenerationLeaseActive(
+                    retry_after_ms=int((lease_expires_at - now).total_seconds() * 1_000) + 1_000
                 )
             current = OrderStatus(order.status)
             if current == OrderStatus.FAILED:
@@ -154,7 +165,16 @@ class GenerationPipeline:
             user_id = presentation.user_id
             order_id = order.id
 
+        await self._notify_progress(progress_callback, 10, "content_and_design")
         try:
+            await self._update_job_progress(
+                session_factory,
+                presentation_id=presentation_id,
+                lease_token=lease_token,
+                progress=30,
+                current_step="rendering_pptx",
+            )
+            await self._notify_progress(progress_callback, 30, "rendering_pptx")
             with tempfile.TemporaryDirectory(
                 prefix=f"presentation-{presentation_id}-",
                 dir=self._work_root,
@@ -171,6 +191,7 @@ class GenerationPipeline:
                     order_id=order_id,
                     lease_token=lease_token,
                 )
+                await self._notify_progress(progress_callback, 60, "converting_pdf")
                 pdf_path = await self._pdf_converter.convert(
                     pptx_path,
                     workdir / "presentation.pdf",
@@ -233,6 +254,7 @@ class GenerationPipeline:
                     attempt.status = "COMPLETED"
                     attempt.finished_at = datetime.now(UTC)
                     attempt.heartbeat_at = datetime.now(UTC)
+            await self._notify_progress(progress_callback, 90, "delivery_pending")
             return GenerationResult(
                 presentation_id=presentation_id,
                 completed=True,
@@ -250,6 +272,47 @@ class GenerationPipeline:
                 exc,
             )
             raise
+
+    @staticmethod
+    async def _notify_progress(
+        progress_callback: ProgressCallback | None,
+        progress: int,
+        current_step: str,
+    ) -> None:
+        if progress_callback is None:
+            return
+        try:
+            await progress_callback(progress, current_step)
+        except Exception:
+            logger.warning(
+                "generation progress callback failed progress=%s current_step=%s",
+                progress,
+                current_step,
+                exc_info=True,
+            )
+
+    async def _update_job_progress(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        presentation_id: int,
+        lease_token: str,
+        progress: int,
+        current_step: str,
+    ) -> None:
+        async with session_factory() as session, session.begin():
+            job = await session.scalar(
+                select(GenerationJob)
+                .where(GenerationJob.presentation_id == presentation_id)
+                .with_for_update()
+            )
+            if job is None or job.lease_token != lease_token:
+                raise GenerationLeaseLost("generation lease expired during progress update")
+            now = datetime.now(UTC)
+            job.progress = progress
+            job.current_step = current_step
+            job.heartbeat_at = now
+            job.lease_expires_at = now + timedelta(minutes=15)
 
     async def _mark_quality_check(
         self,
@@ -275,8 +338,8 @@ class GenerationPipeline:
             if job is None or job.lease_token != lease_token:
                 raise GenerationLeaseLost("generation lease expired during rendering")
             now = datetime.now(UTC)
-            job.progress = 80
-            job.current_step = "quality_check"
+            job.progress = 60
+            job.current_step = "converting_pdf"
             job.heartbeat_at = now
             job.lease_expires_at = now + timedelta(minutes=15)
             attempt = await session.scalar(

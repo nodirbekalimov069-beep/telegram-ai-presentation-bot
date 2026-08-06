@@ -112,8 +112,16 @@ async def test_generation_pipeline_creates_and_stores_both_artifacts(tmp_path: P
         storage=storage,
         work_root=tmp_path / "work",
     )
+    progress_updates: list[tuple[int, str]] = []
 
-    result = await pipeline.run(factory, presentation_id=presentation_id)
+    async def record_progress(progress: int, current_step: str) -> None:
+        progress_updates.append((progress, current_step))
+
+    result = await pipeline.run(
+        factory,
+        presentation_id=presentation_id,
+        progress_callback=record_progress,
+    )
 
     async with factory() as session:
         saved = await session.get(Presentation, presentation_id)
@@ -133,4 +141,10 @@ async def test_generation_pipeline_creates_and_stores_both_artifacts(tmp_path: P
     assert attempt is not None and attempt.status == "COMPLETED"
     assert saved.pptx_storage_key and await storage.exists(saved.pptx_storage_key)
     assert saved.pdf_storage_key and await storage.exists(saved.pdf_storage_key)
+    assert progress_updates == [
+        (10, "content_and_design"),
+        (30, "rendering_pptx"),
+        (60, "converting_pdf"),
+        (90, "delivery_pending"),
+    ]
     await engine.dispose()

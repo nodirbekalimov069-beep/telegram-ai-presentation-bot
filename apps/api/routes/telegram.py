@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from aiogram import Bot, Dispatcher
+from aiogram.dispatcher.middlewares.user_context import UserContextMiddleware
 from aiogram.types import Update
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
@@ -38,6 +39,11 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
     bot: Bot | None = getattr(request.app.state, "telegram_bot", None)
     if dispatcher is None or bot is None:
         raise HTTPException(status_code=503, detail="Telegram webhook is not initialized")
+    if settings.bot_private_mode:
+        event_context = UserContextMiddleware.resolve_event_context(update)
+        if event_context.user is None or event_context.user.id != settings.owner_telegram_id:
+            await dispatcher.feed_update(bot, update)
+            return {"ok": True}
 
     body_hash = hashlib.sha256(body).hexdigest()
     lease_token = uuid4().hex
@@ -78,7 +84,7 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
         raise HTTPException(status_code=503, detail="concurrent update delivery") from exc
 
     try:
-        await dispatcher.feed_webhook_update(bot, update)
+        await dispatcher.feed_update(bot, update)
     except Exception as exc:
         async with request.app.state.session_factory() as session, session.begin():
             inbox = await session.scalar(

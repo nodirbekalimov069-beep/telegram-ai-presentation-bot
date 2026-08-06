@@ -50,6 +50,7 @@
   "progress.pdf": "Creating PDF",
   "progress.qa": "Checking quality",
   "progress.sending": "Sending files",
+  "progress.ai_outline": "🧠 AI is preparing the outline...",
   "quick.started": "⚙️ Command received. Creating the presentation, PPTX and PDF…",
   "quick.pptx_caption": "✅ Ready PPTX file",
   "quick.pdf_caption": "✅ Ready PDF file",
@@ -60,6 +61,7 @@
   "help.text": "Press the new presentation button and follow the steps. If something fails, send the request identifier to an administrator.",
   "error.generic": "An error occurred. Try again later. ID: {request_id}",
   "error.topic_length": "The topic must contain 3–500 characters.",
+  "error.ai_temporary": "⚠️ The AI is temporarily unavailable. Please try again.",
   "rating.ask": "Rate the result from 1 to 5:",
   "rating.thanks": "Thank you for your rating!"
 }

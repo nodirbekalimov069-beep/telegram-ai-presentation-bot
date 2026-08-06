@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 from typing import Any
+from uuid import uuid4
 
 from aiogram import F, Router
 from aiogram.filters import StateFilter
@@ -17,7 +18,7 @@ from aiogram.types import (
     Message,
 )
 from core.config import Settings
-from modules.ai.factory import build_ai_provider
+from modules.ai.factory import build_ai_provider, close_ai_provider
 from modules.orders.models import Order
 from modules.orders.service import OrderService
 from modules.payments.factory import build_payment_provider
@@ -182,16 +183,55 @@ async def _send_outline(
     presentation: Presentation,
     localizer: Localizer,
     language: str,
+    *,
+    edit: bool = False,
 ) -> None:
     slides = presentation.outline.get("slides", [])
     lines = [f"{item['number']}. {item['title']}" for item in slides]
     body = "\n".join(lines)
     if len(body) > 3400:
         body = f"{body[:3390]}…"
-    await message.answer(
-        f"{localizer.text(language, 'create.outline')}\n\n{body}",
-        reply_markup=outline_actions(localizer, language, presentation.id),
-    )
+    text = f"{localizer.text(language, 'create.outline')}\n\n{body}"
+    reply_markup = outline_actions(localizer, language, presentation.id)
+    if edit:
+        await message.edit_text(text, reply_markup=reply_markup)
+    else:
+        await message.answer(text, reply_markup=reply_markup)
+
+
+async def _generate_outline_safely(
+    *,
+    responder: Any,
+    session: AsyncSession,
+    settings: Settings,
+    localizer: Localizer,
+    language: str,
+    order_id: int,
+    telegram_user_id: int,
+) -> Presentation | None:
+    correlation_id = uuid4().hex
+    provider: Any = None
+    try:
+        provider = build_ai_provider(settings)
+        return await PresentationService(ai_provider=provider).generate_outline(
+            session, order_id=order_id
+        )
+    except Exception:
+        logger.exception(
+            "AI outline generation failed order_id=%s telegram_user_id=%s correlation_id=%s",
+            order_id,
+            telegram_user_id,
+            correlation_id,
+        )
+        error_text = localizer.text(language, "error.ai_temporary")
+        if hasattr(responder, "edit_text"):
+            await responder.edit_text(error_text)
+        else:
+            await responder.answer(error_text)
+        return None
+    finally:
+        if provider is not None:
+            await close_ai_provider(provider)
 
 
 @router.message(F.text.in_(labels("menu.new")))
@@ -401,6 +441,9 @@ async def choose_plan(
                 telegram_user_id=message.from_user.id,
                 topic=str(data["topic"]),
                 settings=dict(data),
+                private_owner_test=(
+                    settings.bot_private_mode and message.from_user.id == settings.owner_telegram_id
+                ),
             )
         else:
             user = await current_user(session, message.from_user.id)
@@ -417,12 +460,21 @@ async def choose_plan(
     await state.update_data(order_id=order.id)
 
     if plan_code == "free_demo":
-        presentation = await PresentationService(
-            ai_provider=build_ai_provider(settings)
-        ).generate_outline(session, order_id=order.id)
+        progress_message = await message.answer(localizer.text(language, "progress.ai_outline"))
+        presentation = await _generate_outline_safely(
+            responder=progress_message,
+            session=session,
+            settings=settings,
+            localizer=localizer,
+            language=language,
+            order_id=order.id,
+            telegram_user_id=message.from_user.id,
+        )
+        if presentation is None:
+            return
         await state.update_data(presentation_id=presentation.id)
         await state.set_state(PresentationFlow.outline_review)
-        await _send_outline(message, presentation, localizer, language)
+        await _send_outline(progress_message, presentation, localizer, language, edit=True)
         return
 
     await state.set_state(PresentationFlow.waiting_payment)
@@ -489,13 +541,23 @@ async def mock_payment(
         payload,
         {"X-Mock-Signature": signature},
     )
-    presentation = await PresentationService(
-        ai_provider=build_ai_provider(settings)
-    ).generate_outline(session, order_id=order.id)
+    await callback.message.edit_text(localizer.text(language, "progress.ai_outline"))
+    presentation = await _generate_outline_safely(
+        responder=callback.message,
+        session=session,
+        settings=settings,
+        localizer=localizer,
+        language=language,
+        order_id=order.id,
+        telegram_user_id=callback.from_user.id,
+    )
+    if presentation is None:
+        await callback.answer()
+        return
     await state.update_data(presentation_id=presentation.id)
     await state.set_state(PresentationFlow.outline_review)
     await callback.message.answer(localizer.text(language, "payment.confirmed"))
-    await _send_outline(callback.message, presentation, localizer, language)
+    await _send_outline(callback.message, presentation, localizer, language, edit=True)
     await callback.answer()
 
 
@@ -514,12 +576,15 @@ async def approve_outline(
         await callback.answer(show_alert=True)
         return
     presentation_id, _, language = context
-    job = await PresentationService(ai_provider=build_ai_provider(settings)).approve_outline(
+    job = await PresentationService().approve_outline(
         session,
         presentation_id=presentation_id,
+        progress_chat_id=callback.message.chat.id,
+        progress_message_id=callback.message.message_id,
     )
-    await state.set_state(PresentationFlow.queued)
-    await callback.message.answer(f"{localizer.text(language, 'create.queued')}\nJob: {job.id}")
+    if job.status == "QUEUED":
+        await callback.message.edit_text(f"0% · ⏳ {localizer.text(language, 'create.queued')}")
+        await state.set_state(PresentationFlow.queued)
     await callback.answer()
 
 
@@ -538,11 +603,21 @@ async def regenerate_outline(
         await callback.answer(show_alert=True)
         return
     _, order_id, language = context
-    presentation = await PresentationService(
-        ai_provider=build_ai_provider(settings)
-    ).generate_outline(session, order_id=order_id)
+    await callback.message.edit_text(localizer.text(language, "progress.ai_outline"))
+    presentation = await _generate_outline_safely(
+        responder=callback.message,
+        session=session,
+        settings=settings,
+        localizer=localizer,
+        language=language,
+        order_id=order_id,
+        telegram_user_id=callback.from_user.id,
+    )
+    if presentation is None:
+        await callback.answer()
+        return
     await state.set_state(PresentationFlow.outline_review)
-    await _send_outline(callback.message, presentation, localizer, language)
+    await _send_outline(callback.message, presentation, localizer, language, edit=True)
     await callback.answer()
 
 
@@ -573,6 +648,8 @@ async def apply_outline_edit(
     localizer: Localizer,
     settings: Settings,
 ) -> None:
+    if message.from_user is None:
+        return
     data = await state.get_data()
     order_id = int(data["order_id"])
     async with session.begin():
@@ -582,11 +659,28 @@ async def apply_outline_edit(
         revised: dict[str, Any] = dict(order.settings)
         revised["outline_edit_request"] = (message.text or "")[:1000]
         order.settings = revised
-    presentation = await PresentationService(
-        ai_provider=build_ai_provider(settings)
-    ).generate_outline(session, order_id=order_id)
+    progress_message = await message.answer(
+        localizer.text(str(data["language"]), "progress.ai_outline")
+    )
+    presentation = await _generate_outline_safely(
+        responder=progress_message,
+        session=session,
+        settings=settings,
+        localizer=localizer,
+        language=str(data["language"]),
+        order_id=order_id,
+        telegram_user_id=message.from_user.id,
+    )
+    if presentation is None:
+        return
     await state.set_state(PresentationFlow.outline_review)
-    await _send_outline(message, presentation, localizer, str(data["language"]))
+    await _send_outline(
+        progress_message,
+        presentation,
+        localizer,
+        str(data["language"]),
+        edit=True,
+    )
 
 
 @router.message(

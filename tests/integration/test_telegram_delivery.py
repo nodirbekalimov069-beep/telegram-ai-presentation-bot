@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -11,7 +12,7 @@ from modules.files.storage import LocalStorage
 from modules.orders.domain import OrderStatus
 from modules.orders.models import Order
 from modules.plans.models import Plan
-from modules.presentations.delivery import TelegramArtifactDelivery
+from modules.presentations.delivery import DeliveryInProgress, TelegramArtifactDelivery
 from modules.presentations.models import GenerationJob, Presentation
 from modules.users.models import User
 
@@ -142,4 +143,17 @@ async def test_delivery_retries_only_the_missing_telegram_file(tmp_path: Path) -
     assert saved.pdf_telegram_message_id == 201
     assert saved.delivered_at is not None
     assert job is not None and job.progress == 100 and job.current_step == "completed"
+
+    async with factory() as session, session.begin():
+        saved = await session.get(Presentation, presentation_id, with_for_update=True)
+        assert saved is not None
+        saved.delivery_status = "SENDING"
+        saved.delivery_lease_token = "existing-delivery"
+        saved.delivery_lease_expires_at = datetime.now(UTC) + timedelta(minutes=2)
+
+    active_lease_bot = RecordingBot(first_message_id=400)
+    with pytest.raises(DeliveryInProgress) as raised:
+        await delivery.deliver(factory, presentation_id=presentation_id, bot=active_lease_bot)
+    assert 100_000 <= raised.value.retry_after_ms <= 125_000
+    assert active_lease_bot.filenames == []
     await engine.dispose()

@@ -20,7 +20,9 @@ from modules.users.models import User
 
 
 class DeliveryInProgress(RuntimeError):
-    pass
+    def __init__(self, *, retry_after_ms: int) -> None:
+        super().__init__("artifact delivery is already owned by an active lease")
+        self.retry_after_ms = max(1_000, retry_after_ms)
 
 
 class DeliveryLeaseLost(RuntimeError):
@@ -75,7 +77,9 @@ class TelegramArtifactDelivery:
                 and expires_at is not None
                 and expires_at > now
             ):
-                raise DeliveryInProgress("artifact delivery is already running")
+                raise DeliveryInProgress(
+                    retry_after_ms=int((expires_at - now).total_seconds() * 1_000) + 1_000
+                )
             if (
                 presentation.status != OrderStatus.COMPLETED
                 or not presentation.pptx_storage_key

@@ -1,5 +1,7 @@
 """AI provider dependency factory."""
 
+import inspect
+
 from core.config import Settings
 from modules.ai.providers.base import AIProvider
 from modules.ai.providers.mock import MockAIProvider
@@ -17,3 +19,11 @@ def build_ai_provider(settings: Settings) -> AIProvider:
         max_retries=settings.ai_max_retries,
         retry_base_delay_seconds=settings.ai_retry_base_delay_seconds,
     )
+
+
+async def close_ai_provider(provider: AIProvider) -> None:
+    close = getattr(provider, "aclose", None)
+    if callable(close):
+        result = close()
+        if inspect.isawaitable(result):
+            await result

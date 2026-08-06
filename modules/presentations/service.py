@@ -10,15 +10,18 @@ from modules.orders.domain import OrderStateMachine, OrderStatus
 from modules.orders.models import Order
 from modules.plans.models import Plan
 from modules.presentations.models import GenerationJob, Presentation
+from modules.users.service import FreeDemoService
 
 
 class PresentationService:
-    def __init__(self, *, ai_provider: AIProvider) -> None:
+    def __init__(self, *, ai_provider: AIProvider | None = None) -> None:
         self._ai_provider = ai_provider
         self._machine = OrderStateMachine()
         self._outbox = OutboxService()
 
     async def generate_outline(self, session: AsyncSession, *, order_id: int) -> Presentation:
+        if self._ai_provider is None:
+            raise RuntimeError("AI provider is required for outline generation")
         async with session.begin():
             order = await session.scalar(
                 select(Order).where(Order.id == order_id).with_for_update()
@@ -62,7 +65,31 @@ class PresentationService:
             )
             presentation_id = presentation.id
 
-        outline = await self._ai_provider.generate_outline(request)
+        try:
+            outline = await self._ai_provider.generate_outline(request)
+        except Exception as exc:
+            async with session.begin():
+                order = await session.get(Order, order_id, with_for_update=True)
+                presentation = await session.get(
+                    Presentation, presentation_id, with_for_update=True
+                )
+                if (
+                    order is not None
+                    and OrderStatus(order.status) == OrderStatus.OUTLINE_GENERATING
+                ):
+                    order.status = self._machine.transition(
+                        OrderStatus.OUTLINE_GENERATING,
+                        OrderStatus.FAILED,
+                    )
+                if presentation is not None:
+                    presentation.status = OrderStatus.FAILED
+                    presentation.error_message = f"{type(exc).__name__}: outline generation failed"
+            await FreeDemoService().release_system_failure(
+                session,
+                order_id=order_id,
+                reason=f"{type(exc).__name__}: outline generation failed",
+            )
+            raise
 
         async with session.begin():
             order = await session.get(Order, order_id, with_for_update=True)
@@ -82,6 +109,8 @@ class PresentationService:
         session: AsyncSession,
         *,
         presentation_id: int,
+        progress_chat_id: int | None = None,
+        progress_message_id: int | None = None,
     ) -> GenerationJob:
         async with session.begin():
             presentation = await session.scalar(
@@ -92,6 +121,11 @@ class PresentationService:
             order = await session.get(Order, presentation.order_id, with_for_update=True)
             if order is None:
                 raise LookupError("presentation order not found")
+            job = await session.scalar(
+                select(GenerationJob).where(GenerationJob.presentation_id == presentation.id)
+            )
+            if job is not None:
+                return job
             current = OrderStatus(order.status)
             if current != OrderStatus.QUEUED:
                 order.status = self._machine.transition(
@@ -99,21 +133,19 @@ class PresentationService:
                     OrderStatus.QUEUED,
                 )
             presentation.status = OrderStatus.QUEUED
-            job = await session.scalar(
-                select(GenerationJob).where(GenerationJob.presentation_id == presentation.id)
+            plan = await session.get(Plan, order.plan_id)
+            job = GenerationJob(
+                presentation_id=presentation.id,
+                status="QUEUED",
+                progress=0,
+                current_step="queued",
+                progress_chat_id=progress_chat_id,
+                progress_message_id=progress_message_id,
+                retries=0,
+                priority=plan.priority if plan is not None else 0,
             )
-            if job is None:
-                plan = await session.get(Plan, order.plan_id)
-                job = GenerationJob(
-                    presentation_id=presentation.id,
-                    status="QUEUED",
-                    progress=0,
-                    current_step="queued",
-                    retries=0,
-                    priority=plan.priority if plan is not None else 0,
-                )
-                session.add(job)
-                await session.flush()
+            session.add(job)
+            await session.flush()
             await self._outbox.enqueue(
                 session,
                 event_type="generation.requested",
