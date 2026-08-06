@@ -61,6 +61,8 @@
   "help.text": "Press the new presentation button and follow the steps. If something fails, send the request identifier to an administrator.",
   "error.generic": "An error occurred. Try again later. ID: {request_id}",
   "error.topic_length": "The topic must contain 3–500 characters.",
+  "error.field_length": "The answer must be between {minimum} and {maximum} characters.",
+  "error.outline_busy": "The outline is being updated. Try again when it finishes.",
   "error.ai_temporary": "⚠️ The AI is temporarily unavailable. Please try again.",
   "rating.ask": "Rate the result from 1 to 5:",
   "rating.thanks": "Thank you for your rating!"

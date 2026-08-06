@@ -66,6 +66,39 @@ async def cancel_flow(
 ) -> None:
     if message.from_user is None:
         return
+    data = await state.get_data()
+    current_state = await state.get_state()
+    if current_state in {
+        PresentationFlow.outline_review.state,
+        PresentationFlow.outline_edit.state,
+    }:
+        try:
+            presentation_id = int(data["presentation_id"])
+            await PresentationService().cancel_outline(
+                session,
+                presentation_id=presentation_id,
+            )
+        except ValueError as exc:
+            language = await _language(session, message.from_user.id)
+            if str(exc) == "outline is no longer cancellable":
+                await message.answer(localizer.text(language, "error.outline_busy"))
+                return
+            logger.exception(
+                "outline cancellation cleanup failed telegram_user_id=%s",
+                message.from_user.id,
+            )
+            request_id = uuid4().hex[:12]
+            await message.answer(localizer.text(language, "error.generic", request_id=request_id))
+            return
+        except (KeyError, TypeError, LookupError):
+            logger.exception(
+                "outline cancellation cleanup failed telegram_user_id=%s",
+                message.from_user.id,
+            )
+            language = await _language(session, message.from_user.id)
+            request_id = uuid4().hex[:12]
+            await message.answer(localizer.text(language, "error.generic", request_id=request_id))
+            return
     language = await _language(session, message.from_user.id)
     await state.clear()
     await message.answer(localizer.text(language, "create.cancelled"))
@@ -217,6 +250,11 @@ async def _generate_outline_safely(
             session, order_id=order_id
         )
     except Exception:
+        await PresentationService().fail_outline_before_start(
+            session,
+            order_id=order_id,
+            reason="AI provider initialization or outline generation failed",
+        )
         logger.exception(
             "AI outline generation failed order_id=%s telegram_user_id=%s correlation_id=%s",
             order_id,
@@ -297,7 +335,11 @@ async def topic(message: Message, state: FSMContext, localizer: Localizer) -> No
 async def purpose(message: Message, state: FSMContext, localizer: Localizer) -> None:
     data = await state.get_data()
     language = str(data["language"])
-    await state.update_data(purpose=(message.text or "")[:300])
+    value = (message.text or "").strip()
+    if not 2 <= len(value) <= 300:
+        await message.answer(localizer.text(language, "error.field_length", minimum=2, maximum=300))
+        return
+    await state.update_data(purpose=value)
     await state.set_state(PresentationFlow.audience)
     await message.answer(localizer.text(language, "create.audience"))
 
@@ -306,7 +348,11 @@ async def purpose(message: Message, state: FSMContext, localizer: Localizer) -> 
 async def audience(message: Message, state: FSMContext, localizer: Localizer) -> None:
     data = await state.get_data()
     language = str(data["language"])
-    await state.update_data(audience=(message.text or "")[:200])
+    value = (message.text or "").strip()
+    if not 2 <= len(value) <= 200:
+        await message.answer(localizer.text(language, "error.field_length", minimum=2, maximum=200))
+        return
+    await state.update_data(audience=value)
     await state.set_state(PresentationFlow.knowledge_level)
     await message.answer(
         localizer.text(language, "create.knowledge"),
@@ -640,6 +686,41 @@ async def edit_outline(
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("outline:cancel"))
+async def cancel_outline(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+    localizer: Localizer,
+    settings: Settings,
+) -> None:
+    if not isinstance(callback.message, Message):
+        return
+    context = await _authorized_presentation_context(callback, state, session, "cancel")
+    if context is None:
+        await callback.answer(show_alert=True)
+        return
+    presentation_id, _, language = context
+    try:
+        cancelled = await PresentationService().cancel_outline(
+            session,
+            presentation_id=presentation_id,
+        )
+    except ValueError as exc:
+        if str(exc) != "outline is no longer cancellable":
+            raise
+        await callback.answer(localizer.text(language, "error.outline_busy"), show_alert=True)
+        return
+    await state.clear()
+    if not cancelled:
+        await callback.answer()
+        return
+    await callback.message.edit_text(localizer.text(language, "create.cancelled"))
+    user = await current_user(session, callback.from_user.id)
+    await show_main_menu(callback.message, user=user, localizer=localizer, settings=settings)
+    await callback.answer()
+
+
 @router.message(PresentationFlow.outline_edit)
 async def apply_outline_edit(
     message: Message,
@@ -652,12 +733,16 @@ async def apply_outline_edit(
         return
     data = await state.get_data()
     order_id = int(data["order_id"])
+    instruction = (message.text or "").strip()[:1000]
+    if len(instruction) < 2:
+        await message.answer(localizer.text(str(data["language"]), "create.edit"))
+        return
     async with session.begin():
         order = await session.get(Order, order_id)
         if order is None:
             return
         revised: dict[str, Any] = dict(order.settings)
-        revised["outline_edit_request"] = (message.text or "")[:1000]
+        revised["outline_edit_request"] = instruction
         order.settings = revised
     progress_message = await message.answer(
         localizer.text(str(data["language"]), "progress.ai_outline")
@@ -684,7 +769,7 @@ async def apply_outline_edit(
 
 
 @router.message(
-    StateFilter(None, PresentationFlow.language, PresentationFlow.direction),
+    StateFilter(None),
     F.text,
 )
 async def quick_presentation(
@@ -697,6 +782,9 @@ async def quick_presentation(
 ) -> None:
     """Turn one natural-language command into delivered PPTX and PDF files."""
     if message.from_user is None or not message.text:
+        return
+    if settings.app_env != "test":
+        await new_presentation(message, state, session, localizer)
         return
     language = await _language(session, message.from_user.id)
     await state.clear()

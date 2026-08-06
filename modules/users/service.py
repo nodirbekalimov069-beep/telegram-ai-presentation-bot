@@ -17,6 +17,9 @@ class FreeDemoUnavailable(RuntimeError):
     """Raised when the Telegram ID has no available Free Demo entitlement."""
 
 
+MAX_FREE_DEMO_ATTEMPTS = 3
+
+
 class UserService:
     async def register(
         self,
@@ -63,6 +66,8 @@ class FreeDemoService:
         settings: dict[str, Any],
         private_owner_test: bool = False,
     ) -> Order:
+        trusted_settings = dict(settings)
+        trusted_settings.pop("_private_owner_test", None)
         try:
             async with session.begin():
                 user = await session.scalar(
@@ -86,6 +91,7 @@ class FreeDemoService:
                     raise FreeDemoUnavailable("requested slide count violates Free Demo limits")
 
                 if private_owner_test:
+                    trusted_settings["_private_owner_test"] = True
                     order = Order(
                         user_id=user.id,
                         plan_id=plan.id,
@@ -93,7 +99,7 @@ class FreeDemoService:
                         currency="UZS",
                         status=OrderStatus.CREATED,
                         topic=topic,
-                        settings=settings,
+                        settings=trusted_settings,
                     )
                     session.add(order)
                     await session.flush()
@@ -104,8 +110,11 @@ class FreeDemoService:
                     .where(FreeDemoClaim.telegram_user_id == telegram_user_id)
                     .with_for_update()
                 )
-                if claim is not None and claim.status != "RELEASED":
-                    raise FreeDemoUnavailable("Free Demo has already been reserved or consumed")
+                if claim is not None:
+                    if claim.status != "RELEASED":
+                        raise FreeDemoUnavailable("Free Demo has already been reserved or consumed")
+                    if claim.attempt_count >= MAX_FREE_DEMO_ATTEMPTS:
+                        raise FreeDemoUnavailable("Free Demo retry limit has been reached")
 
                 order = Order(
                     user_id=user.id,
@@ -114,7 +123,7 @@ class FreeDemoService:
                     currency="UZS",
                     status=OrderStatus.CREATED,
                     topic=topic,
-                    settings=settings,
+                    settings=trusted_settings,
                 )
                 session.add(order)
                 await session.flush()
@@ -144,22 +153,39 @@ class FreeDemoService:
             raise FreeDemoUnavailable("Free Demo is already reserved") from exc
 
     async def consume_reserved(self, session: AsyncSession, *, order_id: int) -> None:
-        """Consume the entitlement only once generation has successfully started."""
+        """Consume the entitlement once a validated AI outline is persisted."""
         async with session.begin():
-            claim = await session.scalar(
-                select(FreeDemoClaim).where(FreeDemoClaim.order_id == order_id).with_for_update()
-            )
-            if claim is None:
-                return
-            if claim.status == "CONSUMED":
-                return
-            if claim.status != "RESERVED":
-                raise FreeDemoUnavailable("Free Demo reservation is not consumable")
-            claim.status = "CONSUMED"
-            claim.consumed_at = datetime.now(UTC)
-            user = await session.get(User, claim.user_id, with_for_update=True)
-            if user is not None:
-                user.free_demo_used = True
+            await self.consume_reserved_in_transaction(session, order_id=order_id)
+
+    async def consume_reserved_in_transaction(
+        self,
+        session: AsyncSession,
+        *,
+        order_id: int,
+    ) -> None:
+        """Consume a reservation inside the caller's active transaction."""
+        reference = await session.scalar(
+            select(FreeDemoClaim).where(FreeDemoClaim.order_id == order_id)
+        )
+        if reference is None:
+            return
+        user = await session.get(User, reference.user_id, with_for_update=True)
+        claim = await session.scalar(
+            select(FreeDemoClaim)
+            .where(FreeDemoClaim.order_id == order_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if claim is None:
+            return
+        if claim.status == "CONSUMED":
+            return
+        if claim.status != "RESERVED":
+            raise FreeDemoUnavailable("Free Demo reservation is not consumable")
+        claim.status = "CONSUMED"
+        claim.consumed_at = datetime.now(UTC)
+        if user is not None:
+            user.free_demo_used = True
 
     async def release_system_failure(
         self,
@@ -170,15 +196,70 @@ class FreeDemoService:
     ) -> bool:
         """Release only an unconsumed reservation after a documented system failure."""
         async with session.begin():
-            claim = await session.scalar(
-                select(FreeDemoClaim).where(FreeDemoClaim.order_id == order_id).with_for_update()
+            order = await session.scalar(
+                select(Order)
+                .where(Order.id == order_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
             )
-            if claim is None or claim.status != "RESERVED":
-                return False
-            order = await session.get(Order, order_id, with_for_update=True)
             if order is None or OrderStatus(order.status) != OrderStatus.FAILED:
                 return False
-            claim.status = "RELEASED"
-            claim.released_at = datetime.now(UTC)
-            claim.release_reason = reason[:500]
-            return True
+            return await self.release_system_failure_in_transaction(
+                session,
+                order_id=order_id,
+                reason=reason,
+            )
+
+    async def release_system_failure_in_transaction(
+        self,
+        session: AsyncSession,
+        *,
+        order_id: int,
+        reason: str,
+    ) -> bool:
+        """Release a reservation after the caller locks and marks its order FAILED."""
+        claim = await session.scalar(
+            select(FreeDemoClaim)
+            .where(FreeDemoClaim.order_id == order_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if claim is None or claim.status != "RESERVED":
+            return False
+        claim.status = "RELEASED"
+        claim.released_at = datetime.now(UTC)
+        claim.release_reason = reason[:500]
+        return True
+
+    async def release_cancelled(self, session: AsyncSession, *, order_id: int) -> bool:
+        """Release an unconsumed reservation after a user cancels the outline."""
+        async with session.begin():
+            order = await session.scalar(
+                select(Order)
+                .where(Order.id == order_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if order is None or OrderStatus(order.status) != OrderStatus.CANCELLED:
+                return False
+            return await self.release_cancelled_in_transaction(session, order_id=order_id)
+
+    async def release_cancelled_in_transaction(
+        self,
+        session: AsyncSession,
+        *,
+        order_id: int,
+    ) -> bool:
+        """Release a reservation after the caller locks and cancels its order."""
+        claim = await session.scalar(
+            select(FreeDemoClaim)
+            .where(FreeDemoClaim.order_id == order_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if claim is None or claim.status != "RESERVED":
+            return False
+        claim.status = "RELEASED"
+        claim.released_at = datetime.now(UTC)
+        claim.release_reason = "cancelled by user"
+        return True

@@ -1,6 +1,7 @@
 """Python-to-Node presentation contract, renderer adapter and PPTX QA."""
 
 import asyncio
+import copy
 import json
 import re
 import tempfile
@@ -45,6 +46,36 @@ def _without_none(value: Any) -> Any:
     if isinstance(value, list):
         return [_without_none(item) for item in value]
     return value
+
+
+def _secure_image_paths(payload: dict[str, Any], *, render_root: Path) -> dict[str, Any]:
+    safe_payload = copy.deepcopy(payload)
+    root = render_root.resolve()
+    slides = safe_payload.get("slides")
+    if not isinstance(slides, list):
+        return safe_payload
+    for slide in slides:
+        if not isinstance(slide, dict):
+            continue
+        image_paths = slide.get("image_paths")
+        if not isinstance(image_paths, list):
+            continue
+        secured: list[Any] = []
+        for value in image_paths:
+            if not isinstance(value, str):
+                secured.append(value)
+                continue
+            candidate = Path(value).expanduser()
+            if not candidate.is_absolute():
+                candidate = root / candidate
+            resolved = candidate.resolve()
+            if not resolved.is_relative_to(root):
+                raise PresentationRenderError("image path is outside render workdir")
+            if not resolved.is_file():
+                raise PresentationRenderError("image path is not a regular file")
+            secured.append(str(resolved))
+        slide["image_paths"] = secured
+    return safe_payload
 
 
 def build_engine_payload(
@@ -130,6 +161,7 @@ class NodePresentationRenderer:
     async def render(self, payload: dict[str, Any], output: Path) -> Path:
         output_path = output.expanduser().resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        safe_payload = _secure_image_paths(payload, render_root=output_path.parent)
         descriptor, input_name = tempfile.mkstemp(
             prefix="presentation-",
             suffix=".json",
@@ -138,7 +170,7 @@ class NodePresentationRenderer:
         input_path = Path(input_name)
         try:
             with open(descriptor, "w", encoding="utf-8", closefd=True) as handle:
-                json.dump(payload, handle, ensure_ascii=False)
+                json.dump(safe_payload, handle, ensure_ascii=False)
             process = await asyncio.create_subprocess_exec(
                 self._node_binary,
                 str(self._directory / "render.mjs"),

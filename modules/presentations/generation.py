@@ -23,7 +23,8 @@ from modules.presentations.engine import (
 )
 from modules.presentations.models import GenerationAttempt, GenerationJob, Presentation
 from modules.presentations.pdf import validate_pdf
-from modules.users.models import FreeDemoClaim, User
+from modules.users.models import User
+from modules.users.service import FreeDemoService
 
 logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[int, str], Awaitable[None]]
@@ -82,8 +83,22 @@ class GenerationPipeline:
     ) -> GenerationResult:
         lease_token = uuid4().hex
         async with session_factory() as session, session.begin():
+            reference = await session.get(Presentation, presentation_id)
+            if reference is None:
+                raise LookupError(f"presentation {presentation_id} not found")
+            order = await session.scalar(
+                select(Order)
+                .where(Order.id == reference.order_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            if order is None:
+                raise LookupError("presentation order not found")
             presentation = await session.scalar(
-                select(Presentation).where(Presentation.id == presentation_id).with_for_update()
+                select(Presentation)
+                .where(Presentation.id == presentation_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
             )
             if presentation is None:
                 raise LookupError(f"presentation {presentation_id} not found")
@@ -98,13 +113,11 @@ class GenerationPipeline:
                     pptx_storage_key=presentation.pptx_storage_key,
                     pdf_storage_key=presentation.pdf_storage_key,
                 )
-            order = await session.get(Order, presentation.order_id, with_for_update=True)
-            if order is None:
-                raise LookupError("presentation order not found")
             job = await session.scalar(
                 select(GenerationJob)
                 .where(GenerationJob.presentation_id == presentation.id)
                 .with_for_update()
+                .execution_options(populate_existing=True)
             )
             if job is None:
                 raise LookupError("generation job not found")
@@ -144,15 +157,10 @@ class GenerationPipeline:
             plan = await session.get(Plan, order.plan_id)
             if plan is None:
                 raise LookupError("order plan not found")
-            claim = await session.scalar(
-                select(FreeDemoClaim).where(FreeDemoClaim.order_id == order.id).with_for_update()
+            await FreeDemoService().consume_reserved_in_transaction(
+                session,
+                order_id=order.id,
             )
-            if claim is not None and claim.status == "RESERVED":
-                claim.status = "CONSUMED"
-                claim.consumed_at = datetime.now(UTC)
-                user = await session.get(User, claim.user_id, with_for_update=True)
-                if user is not None:
-                    user.free_demo_used = True
             payload = build_engine_payload(
                 title=presentation.title,
                 language=presentation.language,
@@ -214,16 +222,25 @@ class GenerationPipeline:
                 )
 
             async with session_factory() as session, session.begin():
-                presentation = await session.get(
-                    Presentation, presentation_id, with_for_update=True
+                order = await session.scalar(
+                    select(Order)
+                    .where(Order.id == order_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
-                order = await session.get(Order, order_id, with_for_update=True)
+                presentation = await session.scalar(
+                    select(Presentation)
+                    .where(Presentation.id == presentation_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
                 if presentation is None or order is None:
                     raise LookupError("generation aggregate disappeared")
                 job = await session.scalar(
                     select(GenerationJob)
                     .where(GenerationJob.presentation_id == presentation_id)
                     .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
                 if job is None or job.lease_token != lease_token:
                     raise GenerationLeaseLost("generation fencing token is no longer current")
@@ -323,8 +340,18 @@ class GenerationPipeline:
         lease_token: str,
     ) -> None:
         async with session_factory() as session, session.begin():
-            presentation = await session.get(Presentation, presentation_id, with_for_update=True)
-            order = await session.get(Order, order_id, with_for_update=True)
+            order = await session.scalar(
+                select(Order)
+                .where(Order.id == order_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            presentation = await session.scalar(
+                select(Presentation)
+                .where(Presentation.id == presentation_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
             if presentation is None or order is None:
                 raise LookupError("generation aggregate disappeared")
             order.status = self._machine.transition(
@@ -333,7 +360,10 @@ class GenerationPipeline:
             )
             presentation.status = OrderStatus.QUALITY_CHECK
             job = await session.scalar(
-                select(GenerationJob).where(GenerationJob.presentation_id == presentation_id)
+                select(GenerationJob)
+                .where(GenerationJob.presentation_id == presentation_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
             )
             if job is None or job.lease_token != lease_token:
                 raise GenerationLeaseLost("generation lease expired during rendering")
@@ -358,15 +388,26 @@ class GenerationPipeline:
     ) -> None:
         detail = f"{type(error).__name__}: {error}"[:2000]
         async with session_factory() as session, session.begin():
+            order = await session.scalar(
+                select(Order)
+                .where(Order.id == order_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+            presentation = await session.scalar(
+                select(Presentation)
+                .where(Presentation.id == presentation_id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
             job = await session.scalar(
                 select(GenerationJob)
                 .where(GenerationJob.presentation_id == presentation_id)
                 .with_for_update()
+                .execution_options(populate_existing=True)
             )
             if job is None or job.lease_token != lease_token:
                 return
-            presentation = await session.get(Presentation, presentation_id, with_for_update=True)
-            order = await session.get(Order, order_id, with_for_update=True)
             if presentation is not None and presentation.status != OrderStatus.COMPLETED:
                 presentation.status = OrderStatus.FAILED
                 presentation.error_message = detail

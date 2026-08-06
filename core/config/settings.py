@@ -8,6 +8,30 @@ from pydantic import Field, SecretStr, computed_field, field_validator, model_va
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_PLACEHOLDER_MARKERS = (
+    "change-me",
+    "changeme",
+    "replace-with",
+    "placeholder",
+    "example",
+    "your-",
+    "your_",
+    "development",
+    "password",
+)
+
+
+def _validate_production_secret(name: str, value: str, *, min_length: int) -> None:
+    stripped = value.strip()
+    normalized = stripped.lower()
+    if (
+        len(stripped) < min_length
+        or len(set(stripped)) < 12
+        or any(marker in normalized for marker in _PLACEHOLDER_MARKERS)
+    ):
+        raise ValueError(f"{name} must be a strong, non-placeholder production secret")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -88,11 +112,16 @@ class Settings(BaseSettings):
     def production_credentials_must_be_explicit(self) -> "Settings":
         if self.app_env != "production":
             return self
-        if self.secret_key.get_secret_value() == "development-only-change-me":
-            raise ValueError("SECRET_KEY must be changed in production")
+        _validate_production_secret(
+            "SECRET_KEY",
+            self.secret_key.get_secret_value(),
+            min_length=32,
+        )
         if not self.telegram_bot_token.get_secret_value():
             raise ValueError("TELEGRAM_BOT_TOKEN is required in production")
-        if self.ai_provider != "mock" and not self.ai_api_key.get_secret_value():
+        if self.ai_provider == "mock":
+            raise ValueError("mock AI provider must not be enabled in production")
+        if not self.ai_api_key.get_secret_value():
             raise ValueError("AI_API_KEY is required for the configured AI provider")
         if self.payment_provider == "mock":
             raise ValueError("mock payments must not be enabled in production")
@@ -105,10 +134,17 @@ class Settings(BaseSettings):
             value.get_secret_value() for value in (self.payme_merchant_id, self.payme_secret_key)
         ):
             raise ValueError("Payme credentials are required")
-        if self.telegram_mode == "webhook" and not self.telegram_webhook_secret.get_secret_value():
-            raise ValueError("TELEGRAM_WEBHOOK_SECRET is required in webhook mode")
-        if not self.admin_api_token.get_secret_value():
-            raise ValueError("ADMIN_API_TOKEN is required in production")
+        if self.telegram_mode == "webhook":
+            _validate_production_secret(
+                "TELEGRAM_WEBHOOK_SECRET",
+                self.telegram_webhook_secret.get_secret_value(),
+                min_length=16,
+            )
+        _validate_production_secret(
+            "ADMIN_API_TOKEN",
+            self.admin_api_token.get_secret_value(),
+            min_length=24,
+        )
         return self
 
 

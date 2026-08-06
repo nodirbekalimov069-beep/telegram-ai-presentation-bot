@@ -16,6 +16,7 @@ from modules.payments.service import (
 )
 
 router = APIRouter(prefix="/api/v1/payments", tags=["payments"])
+mock_router = APIRouter(prefix="/api/v1/payments", tags=["payments"])
 
 
 def _payme_error(
@@ -98,9 +99,11 @@ async def click_webhook(request: Request) -> dict[str, Any]:
         return await PaymentProtocolService().handle_click(session, command)
 
 
-@router.post("/mock/webhook")
+@mock_router.post("/mock/webhook")
 async def mock_webhook(request: Request) -> dict[str, bool]:
     settings = request.app.state.settings
+    if settings.app_env == "production" or settings.payment_provider != "mock":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     provider = MockPaymentProvider(secret=settings.mock_payment_secret.get_secret_value())
     body = await request.body()
     async with request.app.state.session_factory() as session:

@@ -190,3 +190,25 @@ def test_outline_rejects_slide_title_repeated_as_bullet() -> None:
 
     with pytest.raises(AIContractError, match="invalid outline contract"):
         parse_outline(raw, expected_slide_count=1)
+
+
+def test_outline_rejects_coerced_slide_number() -> None:
+    raw = json.dumps(
+        {
+            "title": "AI asoslari",
+            "slides": [
+                {
+                    "number": "1",
+                    "title": "Kirish",
+                    "purpose": "Mavzuni tanishtirish",
+                    "key_points": ["Aniq mazmun"],
+                    "visual_type": "title",
+                    "layout": "cover",
+                    "sources": [],
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(AIContractError, match="invalid outline contract"):
+        parse_outline(raw, expected_slide_count=1)

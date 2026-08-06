@@ -4,6 +4,7 @@ import pytest
 
 from modules.presentations.engine import (
     NodePresentationRenderer,
+    PresentationRenderError,
     build_engine_payload,
     validate_pptx,
 )
@@ -97,3 +98,25 @@ async def test_python_adapter_renders_real_pptx_and_qa_counts_slides(tmp_path: P
     assert report.slide_count == 2
     assert report.is_valid
     assert output.stat().st_size > 10_000
+
+
+@pytest.mark.asyncio
+async def test_python_adapter_rejects_image_outside_render_workdir(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    renderer = NodePresentationRenderer(project_root / "apps" / "presentation_engine")
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    outside_image = tmp_path / "outside.png"
+    outside_image.write_bytes(b"not-an-image")
+    payload = build_engine_payload(
+        title="AI va ta’lim",
+        language="uz",
+        direction="Ta’lim",
+        design_style="ai",
+        plan_code="premium",
+        outline=sample_outline(),
+    )
+    payload["slides"][0]["image_paths"] = [str(outside_image)]
+
+    with pytest.raises(PresentationRenderError, match="outside render workdir"):
+        await renderer.render(payload, workdir / "result.pptx")

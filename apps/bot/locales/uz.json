@@ -61,6 +61,8 @@
   "help.text": "Yangi prezentatsiya tugmasini bosing va bosqichlarni bajaring. Muammo bo‘lsa administratorga murojaat identifikatorini yuboring.",
   "error.generic": "Xatolik yuz berdi. Keyinroq qayta urinib ko‘ring. ID: {request_id}",
   "error.topic_length": "Mavzu 3–500 belgi oralig‘ida bo‘lishi kerak.",
+  "error.field_length": "Javob {minimum}–{maximum} belgi oralig‘ida bo‘lishi kerak.",
+  "error.outline_busy": "Reja hozir yangilanmoqda. Jarayon tugagach qayta urinib ko‘ring.",
   "error.ai_temporary": "⚠️ AI javob berishda vaqtinchalik muammo yuz berdi. Qayta urinib ko‘ring.",
   "rating.ask": "Natijani 1 dan 5 gacha baholang:",
   "rating.thanks": "Bahoyingiz uchun rahmat!"

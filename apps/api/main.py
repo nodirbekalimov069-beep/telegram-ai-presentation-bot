@@ -75,6 +75,8 @@ def create_app(
     app.include_router(health.router)
     app.include_router(plans.router)
     app.include_router(payments.router)
+    if resolved_settings.app_env != "production" and resolved_settings.payment_provider == "mock":
+        app.include_router(payments.mock_router)
     app.include_router(admin.router)
     app.include_router(telegram.router)
     return app
