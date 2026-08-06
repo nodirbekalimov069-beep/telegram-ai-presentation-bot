@@ -1,0 +1,39 @@
+# Python
+.venv/
+.bootstrap/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime
+artifacts/
+storage/
+tmp/
+logs/
+*.sqlite3
+*.db
+
+# Node
+node_modules/
+apps/presentation_engine/node_modules/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Build
+build/
+dist/
+*.egg-info/

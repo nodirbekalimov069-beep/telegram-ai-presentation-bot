@@ -1,0 +1,1 @@
+"""Template catalog and selection."""

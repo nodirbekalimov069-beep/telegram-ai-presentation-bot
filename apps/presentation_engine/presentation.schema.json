@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://telegram-ai.local/schemas/presentation-engine-v1.json",
+  "title": "Presentation Engine Input v1",
+  "description": "Contract for generating a 16:9 editable PPTX. RGB colors omit '#'. Text that cannot fit at 18pt or larger is rejected.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "language", "theme", "plan_code", "slides"],
+  "properties": {
+    "title": { "type": "string", "minLength": 1, "maxLength": 140, "description": "Deck metadata title." },
+    "language": { "type": "string", "minLength": 1, "maxLength": 35, "description": "BCP 47 language tag, for example en-US." },
+    "theme": {
+      "type": "object", "additionalProperties": false, "required": ["palette", "typography"],
+      "properties": {
+        "palette": {
+          "type": "object", "additionalProperties": false,
+          "required": ["background", "foreground", "primary", "secondary", "accent"],
+          "properties": {
+            "background": { "$ref": "#/$defs/color" }, "foreground": { "$ref": "#/$defs/color" },
+            "primary": { "$ref": "#/$defs/color" }, "secondary": { "$ref": "#/$defs/color" }, "accent": { "$ref": "#/$defs/color" }
+          }
+        },
+        "typography": {
+          "type": "object", "additionalProperties": false, "required": ["heading", "body"],
+          "properties": { "heading": { "type": "string", "minLength": 1, "maxLength": 80 }, "body": { "type": "string", "minLength": 1, "maxLength": 80 } }
+        }
+      }
+    },
+    "plan_code": { "enum": ["FREE_DEMO", "MEDIUM", "PREMIUM", "PREMIUM_PLUS"], "description": "FREE_DEMO adds a small CTA only to the final slide. PREMIUM and PREMIUM_PLUS emit speaker notes. Paid plans have no watermark." },
+    "slides": { "type": "array", "minItems": 1, "maxItems": 30, "items": { "$ref": "#/$defs/slide" } }
+  },
+  "$defs": {
+    "color": { "type": "string", "pattern": "^[0-9A-Fa-f]{6}$", "description": "Six-digit RGB hex without '#'." },
+    "source": {
+      "type": "object", "additionalProperties": false, "required": ["label", "url"],
+      "properties": { "label": { "type": "string", "minLength": 1 }, "url": { "type": "string", "format": "uri" } }
+    },
+    "table": {
+      "type": "object", "additionalProperties": false, "required": ["headers", "rows"],
+      "description": "Native editable PowerPoint table. Every row must have the same width as headers.",
+      "properties": {
+        "headers": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": "string", "minLength": 1 } },
+        "rows": { "type": "array", "minItems": 1, "maxItems": 12, "items": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "type": ["string", "number", "boolean"] } } }
+      }
+    },
+    "chart": {
+      "type": "object", "additionalProperties": false, "required": ["type", "categories", "series"],
+      "description": "Native editable PowerPoint chart. Each values array must match categories; pie accepts one series.",
+      "properties": {
+        "type": { "enum": ["bar", "line", "pie"] },
+        "categories": { "type": "array", "minItems": 1, "maxItems": 12, "items": { "type": "string", "minLength": 1 } },
+        "series": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "type": "object", "additionalProperties": false, "required": ["name", "values"], "properties": { "name": { "type": "string", "minLength": 1 }, "values": { "type": "array", "minItems": 1, "maxItems": 12, "items": { "type": "number" } } } } }
+      }
+    },
+    "layoutItem": { "type": "object", "additionalProperties": false, "required": ["label"], "properties": { "label": { "type": "string", "minLength": 1, "maxLength": 60 }, "description": { "type": "string", "maxLength": 180 } } },
+    "layout": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["type", "items"], "properties": { "type": { "const": "timeline" }, "items": { "type": "array", "minItems": 2, "maxItems": 6, "items": { "$ref": "#/$defs/layoutItem" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "items"], "properties": { "type": { "const": "process" }, "items": { "type": "array", "minItems": 2, "maxItems": 6, "items": { "$ref": "#/$defs/layoutItem" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "strengths", "weaknesses", "opportunities", "threats"], "properties": { "type": { "const": "swot" }, "strengths": { "$ref": "#/$defs/swotItems" }, "weaknesses": { "$ref": "#/$defs/swotItems" }, "opportunities": { "$ref": "#/$defs/swotItems" }, "threats": { "$ref": "#/$defs/swotItems" } } }
+      ]
+    },
+    "swotItems": { "type": "array", "minItems": 1, "maxItems": 5, "items": { "type": "string", "minLength": 1 } },
+    "slide": {
+      "type": "object", "additionalProperties": false, "required": ["title", "bullets", "sources"],
+      "description": "A slide may combine a table with a chart or special layout (up to five table data rows). Charts, images, and timeline/process/SWOT layouts otherwise require the right visual region exclusively.",
+      "properties": {
+        "title": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "bullets": { "type": "array", "maxItems": 12, "items": { "type": "string", "minLength": 1, "maxLength": 600 } },
+        "table": { "$ref": "#/$defs/table" }, "chart": { "$ref": "#/$defs/chart" }, "layout": { "$ref": "#/$defs/layout" },
+        "speaker_notes": { "type": "string", "maxLength": 10000 },
+        "sources": { "type": "array", "maxItems": 30, "items": { "$ref": "#/$defs/source" } },
+        "image_paths": { "type": "array", "maxItems": 4, "description": "Local raster image paths readable by the renderer.", "items": { "type": "string", "minLength": 1 } }
+      }
+    }
+  }
+}

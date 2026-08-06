@@ -1,0 +1,15 @@
+{
+  "name": "@telegram-ai/presentation-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "render": "node render.mjs"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "pptxgenjs": "^4.0.1",
+    "zod": "^4.4.3"
+  }
+}

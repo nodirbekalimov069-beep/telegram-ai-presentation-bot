@@ -1,0 +1,1 @@
+"""Promotional discount domain."""

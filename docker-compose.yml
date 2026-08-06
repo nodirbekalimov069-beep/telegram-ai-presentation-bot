@@ -1,0 +1,168 @@
+name: presentation-ai-nodirbek-bot
+
+x-app-environment: &app-environment
+  APP_ENV: ${APP_ENV:-development}
+  DEBUG: ${DEBUG:-false}
+  SECRET_KEY: ${SECRET_KEY:-development-only-change-me}
+  DATABASE_URL: postgresql+asyncpg://presentation:${POSTGRES_PASSWORD:-presentation}@postgres:5432/presentation
+  REDIS_URL: redis://redis:6379/0
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEGRAM_MODE: ${TELEGRAM_MODE:-polling}
+  TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+  TELEGRAM_ADMIN_IDS: ${TELEGRAM_ADMIN_IDS:-}
+  ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+  AI_PROVIDER: ${AI_PROVIDER:-mock}
+  AI_BASE_URL: ${AI_BASE_URL:-https://api.openai.com/v1}
+  AI_API_KEY: ${AI_API_KEY:-}
+  AI_MODEL: ${AI_MODEL:-gpt-4.1-mini}
+  AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-60}
+  AI_MAX_RETRIES: ${AI_MAX_RETRIES:-3}
+  AI_RETRY_BASE_DELAY_SECONDS: ${AI_RETRY_BASE_DELAY_SECONDS:-0.5}
+  STORAGE_BACKEND: local
+  LOCAL_STORAGE_ROOT: /app/storage
+  GENERATION_WORK_ROOT: /app/tmp/generation
+  PRESENTATION_RENDERER: /app/apps/presentation_engine/render.mjs
+  LIBREOFFICE_BINARY: soffice
+  NODE_BINARY: node
+  GENERATION_MAX_RETRIES: ${GENERATION_MAX_RETRIES:-3}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-20000000}
+  PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-mock}
+  MOCK_PAYMENT_SECRET: ${MOCK_PAYMENT_SECRET:-development-mock-secret}
+
+x-app-service: &app-service
+  image: presentation-ai-nodirbek-bot:local
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment: *app-environment
+  volumes:
+    - presentation_storage:/app/storage
+    - generation_tmp:/app/tmp/generation
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: presentation
+      POSTGRES_USER: presentation
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-presentation}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U presentation -d presentation"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  migrate:
+    <<: *app-service
+    command:
+      - sh
+      - -ec
+      - alembic upgrade head && python -m scripts.seed_local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app-service
+    command: ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  bot:
+    <<: *app-service
+    command: ["python", "-m", "apps.bot.main"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "scripts.process_healthcheck", "apps.bot.main"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    <<: *app-service
+    command:
+      - dramatiq
+      - apps.worker.tasks
+      - --processes
+      - "1"
+      - --threads
+      - "4"
+    healthcheck:
+      test: ["CMD", "python", "-m", "scripts.process_healthcheck", "dramatiq"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  outbox:
+    <<: *app-service
+    command: ["python", "-m", "apps.worker.outbox_dispatcher"]
+    healthcheck:
+      test:
+        ["CMD", "python", "-m", "scripts.process_healthcheck", "outbox_dispatcher"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    stop_grace_period: 15s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  presentation_storage:
+  generation_tmp:
