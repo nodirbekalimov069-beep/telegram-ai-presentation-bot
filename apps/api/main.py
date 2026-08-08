@@ -29,7 +29,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         configure_logging(debug=resolved_settings.debug)
-        if resolved_settings.telegram_mode == "webhook":
+        if resolved_settings.bot_enabled and resolved_settings.telegram_mode == "webhook":
             validate_runtime_credentials(resolved_settings)
             from aiogram import Bot
 
@@ -46,7 +46,7 @@ def create_app(
                 allowed_updates=dispatcher.resolve_used_update_types(),
             )
         yield
-        if resolved_settings.telegram_mode == "webhook":
+        if resolved_settings.bot_enabled and resolved_settings.telegram_mode == "webhook":
             await application.state.telegram_dispatcher.storage.close()
             await application.state.telegram_bot.session.close()
         if owned_engine is not None:

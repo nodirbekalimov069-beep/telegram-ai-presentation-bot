@@ -31,6 +31,7 @@ AI_API_KEY=OpenAI_api_keyingiz
 Quyidagi qiymatlar aynan shunday ekanini tekshiring:
 
 ```dotenv
+BOT_ENABLED=true
 BOT_PRIVATE_MODE=true
 AI_PROVIDER=openai
 AI_MODEL=gpt-4.1-mini
@@ -49,6 +50,8 @@ docker compose up --build
 
 Terminalda `bot`, `worker`, `outbox`, `api`, `postgres` va `redis` ishlayotganini ko‘ring. Birinchi build bir necha daqiqa davom etishi mumkin.
 
+Test tugagach `BOT_ENABLED=false`ga qaytaring; bu consumer’ni default holatda yopiq saqlaydi.
+
 ## 3. Telegram orqali sinang
 
 1. O‘z botingizni Telegram’da oching.
@@ -59,7 +62,7 @@ Terminalda `bot`, `worker`, `outbox`, `api`, `postgres` va `redis` ishlayotganin
 
    **Sun’iy intellektning ta’limdagi imkoniyatlari**
 
-6. `10` slaydni tanlang.
+6. `8` slaydni tanlang.
 7. **Free Demo**ni tanlang.
 8. AI outline’ni ko‘ring.
 9. Zarur bo‘lsa **Qayta yaratish** yoki **Tahrirlash**dan foydalaning.
@@ -69,6 +72,14 @@ Terminalda `bot`, `worker`, `outbox`, `api`, `postgres` va `redis` ishlayotganin
 
 Private owner test rejimida bu oqim oddiy foydalanuvchining bir martalik Free Demo
 entitlementini sarflamaydi; testni qayta bajarish mumkin.
+
+### Telegram delivery semantikasi
+
+Oddiy retry saqlangan Telegram message ID’laridan foydalanib yuborilgan faylni qayta
+yubormaydi. Biroq Telegram Bot API idempotency key bermaydi: Telegram faylni qabul qilgan,
+lekin process message ID’ni database’ga yozishdan oldin hard-crash bo‘lgan juda tor oynada
+bitta artefakt takroran kelishi mumkin. Delivery shu chekka holatda **at-least-once**;
+operator duplicate xabarni qo‘lda tekshiradi.
 
 ## Xavfsizlik tekshiruvi
 

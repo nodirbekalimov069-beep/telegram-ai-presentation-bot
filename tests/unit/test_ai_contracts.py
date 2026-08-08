@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from openai.lib._pydantic import to_strict_json_schema
 from modules.ai.contracts import (
     AIContractError,
     Outline,
@@ -212,3 +213,21 @@ def test_outline_rejects_coerced_slide_number() -> None:
 
     with pytest.raises(AIContractError, match="invalid outline contract"):
         parse_outline(raw, expected_slide_count=1)
+
+
+def test_outline_schema_uses_openai_supported_strict_subset() -> None:
+    schema = to_strict_json_schema(Outline)
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            assert "oneOf" not in node
+            assert "discriminator" not in node
+            if node.get("type") == "object":
+                assert node.get("additionalProperties") is False
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    walk(schema)

@@ -18,6 +18,19 @@ def test_main_menu_contains_required_actions_and_admin_is_conditional() -> None:
     assert localizer.text("uz", "menu.admin") in admin_labels
 
 
+def test_uzbek_owner_menu_uses_the_required_primary_labels() -> None:
+    localizer = Localizer.load_default()
+    keyboard = main_menu_keyboard(localizer, "uz", is_admin=False)
+    labels = {button.text for row in keyboard.keyboard for button in row}
+
+    assert {
+        "🚀 Yangi prezentatsiya",
+        "📂 Mening prezentatsiyalarim",
+        "ℹ️ Yordam",
+        "⚙️ Sozlamalar",
+    } <= labels
+
+
 def test_main_menu_has_a_clear_mobile_first_hierarchy() -> None:
     localizer = Localizer.load_default()
 

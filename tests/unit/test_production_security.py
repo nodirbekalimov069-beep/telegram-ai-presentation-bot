@@ -1,13 +1,16 @@
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import yaml
+from fastapi import HTTPException, Request
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr, ValidationError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from apps.api.main import create_app
+from apps.api.dependencies import require_admin_header
 from core.config import Settings
 
 
@@ -99,3 +102,43 @@ def test_payment_signing_secrets_are_scoped_to_api_and_bot() -> None:
         assert signing_keys <= services[service_name]["environment"].keys()
     for service_name in ("migrate", "worker", "outbox"):
         assert signing_keys.isdisjoint(services[service_name]["environment"].keys())
+
+
+def test_compose_defaults_bot_off_and_binds_api_to_loopback() -> None:
+    compose_path = Path(__file__).resolve().parents[2] / "docker-compose.yml"
+    compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
+
+    assert compose["x-app-environment"]["BOT_ENABLED"] == "${BOT_ENABLED:-false}"
+    assert compose["services"]["api"]["ports"] == [
+        "${API_BIND_HOST:-127.0.0.1}:${API_PORT:-8000}:8000"
+    ]
+
+
+def test_env_example_documents_safe_private_bot_switches() -> None:
+    env_example = (Path(__file__).resolve().parents[2] / ".env.example").read_text(encoding="utf-8")
+
+    assert "BOT_ENABLED=false" in env_example
+    assert "BOT_PRIVATE_MODE=true" in env_example
+
+
+def test_admin_identity_header_cannot_authenticate_without_bearer_secret() -> None:
+    settings = Settings(
+        app_env="test",
+        telegram_admin_ids="999",
+        admin_api_token=SecretStr(""),
+    )
+    request = Request(
+        {
+            "type": "http",
+            "app": SimpleNamespace(state=SimpleNamespace(settings=settings)),
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        require_admin_header(
+            request,
+            x_telegram_user_id="999",
+            authorization=None,
+        )
+
+    assert exc_info.value.status_code == 403

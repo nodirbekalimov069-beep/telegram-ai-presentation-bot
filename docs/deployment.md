@@ -19,6 +19,7 @@ SECRET_KEY=<kamida-32-byte-tasodifiy-qiymat>
 POSTGRES_PASSWORD=<kuchli-parol>
 PUBLIC_BASE_URL=https://bot.example.com
 
+BOT_ENABLED=true
 TELEGRAM_BOT_TOKEN=<BotFather-tokeni>
 TELEGRAM_MODE=webhook
 TELEGRAM_WEBHOOK_SECRET=<tasodifiy-secret>

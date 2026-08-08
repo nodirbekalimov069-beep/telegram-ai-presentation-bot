@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import core.database.models  # noqa: F401
 import pytest
 from aiogram import Bot
 from httpx import ASGITransport, AsyncClient
@@ -12,7 +13,6 @@ from apps.api.main import create_app
 from apps.bot.models import TelegramUpdateInbox
 from core.config import Settings
 from core.database.base import Base
-import core.database.models  # noqa: F401
 
 
 @pytest.mark.asyncio
@@ -23,6 +23,7 @@ async def test_webhook_startup_rejects_private_mode_without_owner(
     factory = async_sessionmaker(engine, expire_on_commit=False)
     settings = Settings(
         app_env="test",
+        bot_enabled=True,
         telegram_mode="webhook",
         telegram_bot_token=SecretStr("123456:abcdefghijklmnopqrstuvwxyzABCDE"),
         telegram_webhook_secret=SecretStr("webhook-secret"),
@@ -50,6 +51,7 @@ async def test_private_webhook_rejects_non_owner_before_durable_inbox() -> None:
     factory = async_sessionmaker(engine, expire_on_commit=False)
     settings = Settings(
         app_env="test",
+        bot_enabled=True,
         telegram_mode="webhook",
         telegram_bot_token=SecretStr("123456:abcdefghijklmnopqrstuvwxyzABCDE"),
         telegram_webhook_secret=SecretStr("webhook-secret"),
@@ -85,4 +87,21 @@ async def test_private_webhook_rejects_non_owner_before_durable_inbox() -> None:
     async with factory() as session:
         inbox_count = await session.scalar(select(func.count(TelegramUpdateInbox.id)))
     assert inbox_count == 0
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_disabled_bot_rejects_webhook_without_processing() -> None:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    app = create_app(
+        settings=Settings(app_env="test", bot_enabled=False),
+        session_factory=factory,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/api/v1/telegram/webhook", content=b"{}")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Telegram bot is disabled"
     await engine.dispose()

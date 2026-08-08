@@ -33,8 +33,9 @@ def require_admin_header(
     if telegram_user_id not in settings.admin_id_set:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin required")
     configured_token = settings.admin_api_token.get_secret_value()
-    if configured_token:
-        supplied = authorization.removeprefix("Bearer ") if authorization else ""
-        if not hmac.compare_digest(supplied, configured_token):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin required")
+    if not configured_token or not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin required")
+    supplied = authorization.removeprefix("Bearer ")
+    if not hmac.compare_digest(supplied, configured_token):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin required")
     return telegram_user_id

@@ -22,6 +22,7 @@ async def api_client(tmp_path: Path):  # type: ignore[no-untyped-def]
         await seed_default_plans(session)
     settings = Settings(
         app_env="test",
+        bot_enabled=True,
         database_url=f"sqlite+aiosqlite:///{tmp_path / 'api.db'}",
         secret_key=SecretStr("test-secret-with-sufficient-length"),
         mock_payment_secret=SecretStr("mock-secret"),

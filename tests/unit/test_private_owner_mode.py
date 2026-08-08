@@ -54,6 +54,7 @@ async def test_private_mode_allows_owner_update() -> None:
 def test_runtime_rejects_private_mode_without_owner_id() -> None:
     settings = Settings(
         app_env="test",
+        bot_enabled=True,
         telegram_bot_token=SecretStr("123456:abcdefghijklmnopqrstuvwxyzABCDE"),
         bot_private_mode=True,
         owner_telegram_id=None,
@@ -66,6 +67,7 @@ def test_runtime_rejects_private_mode_without_owner_id() -> None:
 def test_runtime_accepts_private_owner_with_real_ai_configuration() -> None:
     settings = Settings(
         app_env="test",
+        bot_enabled=True,
         telegram_bot_token=SecretStr("123456:abcdefghijklmnopqrstuvwxyzABCDE"),
         bot_private_mode=True,
         owner_telegram_id=42,
@@ -79,6 +81,7 @@ def test_runtime_accepts_private_owner_with_real_ai_configuration() -> None:
 def test_blank_owner_env_value_reaches_clear_runtime_validation() -> None:
     settings = Settings(
         app_env="test",
+        bot_enabled=True,
         telegram_bot_token=SecretStr("123456:abcdefghijklmnopqrstuvwxyzABCDE"),
         bot_private_mode=True,
         owner_telegram_id="",  # type: ignore[arg-type]

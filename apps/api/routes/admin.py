@@ -1,5 +1,6 @@
 """Authenticated admin statistics and management endpoints."""
 
+from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -179,44 +180,92 @@ async def retry_presentation(
 ) -> dict[str, Any]:
     machine = OrderStateMachine()
     async with session.begin():
-        presentation = await session.get(Presentation, presentation_id, with_for_update=True)
-        if presentation is None:
+        reference = await session.get(Presentation, presentation_id)
+        if reference is None:
             raise HTTPException(status_code=404, detail="presentation not found")
-        order = await session.get(Order, presentation.order_id, with_for_update=True)
+        order = await session.scalar(
+            select(Order)
+            .where(Order.id == reference.order_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        presentation = await session.scalar(
+            select(Presentation)
+            .where(Presentation.id == presentation_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         job = await session.scalar(
             select(GenerationJob)
             .where(GenerationJob.presentation_id == presentation_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
-        if order is None or job is None or OrderStatus(order.status) != OrderStatus.FAILED:
+        if order is None or presentation is None or job is None:
             raise HTTPException(status_code=409, detail="presentation is not retryable")
-        order.status = machine.transition(OrderStatus.FAILED, OrderStatus.QUEUED)
-        presentation.status = OrderStatus.QUEUED
-        presentation.error_message = None
-        job.status = "QUEUED"
-        job.progress = 0
-        job.current_step = "queued"
-        job.error_message = None
-        retry_number = job.retries + 1
+        generation_failed = OrderStatus(order.status) == OrderStatus.FAILED
+        delivery_lease_expires_at = presentation.delivery_lease_expires_at
+        if delivery_lease_expires_at is not None and delivery_lease_expires_at.tzinfo is None:
+            delivery_lease_expires_at = delivery_lease_expires_at.replace(tzinfo=UTC)
+        stale_delivery_lease = presentation.delivery_status == "SENDING" and (
+            delivery_lease_expires_at is None or delivery_lease_expires_at <= datetime.now(UTC)
+        )
+        delivery_retryable = (
+            OrderStatus(order.status) == OrderStatus.COMPLETED
+            and presentation.status == OrderStatus.COMPLETED
+            and (
+                (presentation.delivery_status == "FAILED" and job.status == "DELIVERY_FAILED")
+                or (stale_delivery_lease and job.status == "ARTIFACTS_READY")
+            )
+            and bool(presentation.pptx_storage_key)
+            and bool(presentation.pdf_storage_key)
+        )
+        if not generation_failed and not delivery_retryable:
+            raise HTTPException(status_code=409, detail="presentation is not retryable")
+        if generation_failed:
+            order.status = machine.transition(OrderStatus.FAILED, OrderStatus.QUEUED)
+            presentation.status = OrderStatus.QUEUED
+            presentation.error_message = None
+            job.status = "QUEUED"
+            job.progress = 0
+            job.current_step = "queued"
+            job.error_message = None
+            retry_number = job.retries + 1
+            idempotency_key = f"generation:{presentation_id}:retry:{retry_number}"
+            response_status = "QUEUED"
+            audit_action = "presentation.retry"
+        else:
+            presentation.delivery_status = "PENDING"
+            presentation.delivery_lease_token = None
+            presentation.delivery_lease_expires_at = None
+            presentation.delivery_error = None
+            job.status = "ARTIFACTS_READY"
+            job.progress = 90
+            job.current_step = "delivery_pending"
+            job.error_message = None
+            retry_number = presentation.delivery_attempts + 1
+            idempotency_key = f"generation:{presentation_id}:delivery-retry:{retry_number}"
+            response_status = "DELIVERY_QUEUED"
+            audit_action = "presentation.delivery_retry"
         await OutboxService().enqueue(
             session,
             event_type="generation.requested",
             aggregate_type="presentation",
             aggregate_id=str(presentation_id),
-            idempotency_key=f"generation:{presentation_id}:retry:{retry_number}",
+            idempotency_key=idempotency_key,
             payload={"presentation_id": presentation_id, "priority": job.priority},
         )
         session.add(
             AuditLog(
                 actor_user_id=admin_id,
-                action="presentation.retry",
+                action=audit_action,
                 entity_type="presentation",
                 entity_id=str(presentation_id),
                 request_id=request.headers.get("x-request-id"),
-                details={"retry_number": retry_number},
+                details={"retry_number": retry_number, "stage": response_status},
             )
         )
-    return {"presentation_id": presentation_id, "status": "QUEUED"}
+    return {"presentation_id": presentation_id, "status": response_status}
 
 
 @router.put("/settings/{key}")

@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     telegram_webhook_secret: SecretStr = SecretStr("")
     telegram_admin_ids: str = ""
     admin_api_token: SecretStr = SecretStr("")
+    bot_enabled: bool = False
     bot_private_mode: bool = True
     owner_telegram_id: int | None = None
 

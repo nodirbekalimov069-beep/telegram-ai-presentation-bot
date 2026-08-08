@@ -20,6 +20,11 @@ router = APIRouter(prefix="/api/v1/telegram", tags=["telegram"])
 @router.post("/webhook")
 async def telegram_webhook(request: Request) -> dict[str, bool]:
     settings = request.app.state.settings
+    if not settings.bot_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Telegram bot is disabled",
+        )
     expected = settings.telegram_webhook_secret.get_secret_value()
     supplied_values = request.headers.getlist("x-telegram-bot-api-secret-token")
     if (

@@ -1,6 +1,7 @@
 """Aiogram dispatcher factory and bot process entry point."""
 
 import asyncio
+import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.base import BaseStorage, DefaultKeyBuilder
@@ -15,8 +16,12 @@ from apps.bot.handlers import menu, presentation, start
 from apps.bot.localization import Localizer
 from apps.bot.middleware import DatabaseSessionMiddleware, OwnerOnlyMiddleware
 
+logger = logging.getLogger(__name__)
+
 
 def validate_runtime_credentials(settings: Settings) -> None:
+    if not settings.bot_enabled:
+        return
     if not settings.telegram_bot_token.get_secret_value():
         raise ValueError("TELEGRAM_BOT_TOKEN is required")
     if (
@@ -60,9 +65,13 @@ def build_dispatcher(
     return dispatcher
 
 
-async def run() -> None:
-    settings = get_settings()
+async def run(settings: Settings | None = None) -> None:
+    settings = settings or get_settings()
     configure_logging(debug=settings.debug)
+    if not settings.bot_enabled:
+        logger.warning("Telegram bot consumer is disabled by BOT_ENABLED=false")
+        await asyncio.Event().wait()
+        return
     validate_runtime_credentials(settings)
     token = settings.telegram_bot_token.get_secret_value()
     engine = create_engine(settings)
