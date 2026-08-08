@@ -76,6 +76,7 @@ def _extract_topic(text: str, *, language: str) -> str:
         text,
         flags=re.IGNORECASE,
     )
+    topic = _SLIDE_COUNT_RE.sub(" ", topic, count=1)
     topic = re.split(
         r"\s+(?:haqida|to['\u2018\u2019]?g['\u2018\u2019]?risida|rasmlar?\s+bilan|"
         r"slaydga|slayd\s+qilib|презентац|слайд|presentation|slides?)\b",

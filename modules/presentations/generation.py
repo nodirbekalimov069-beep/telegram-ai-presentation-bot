@@ -89,7 +89,9 @@ async def mark_terminal_generation_failure(
         if job is None:
             return False
         current = OrderStatus(order.status)
-        if current == OrderStatus.CANCELLED or presentation.status == OrderStatus.COMPLETED:
+        if current == OrderStatus.CANCELLED:
+            return True
+        if presentation.status == OrderStatus.COMPLETED:
             return False
         lease_expires_at = job.lease_expires_at
         if lease_expires_at is not None and lease_expires_at.tzinfo is None:
@@ -97,7 +99,7 @@ async def mark_terminal_generation_failure(
         if job.status == "RUNNING" and lease_expires_at is not None and lease_expires_at > now:
             return False
         if current == OrderStatus.FAILED and job.status == "FAILED":
-            return False
+            return True
         if current == OrderStatus.QUEUED:
             current = machine.transition(current, OrderStatus.GENERATING)
         if current != OrderStatus.FAILED:

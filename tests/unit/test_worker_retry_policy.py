@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock
 
 import pytest
-from dramatiq.middleware import CurrentMessage
+from dramatiq.middleware import CurrentMessage, TimeLimitExceeded
 
 from apps.worker import tasks as worker_tasks
 from apps.worker.tasks import (
@@ -108,3 +108,72 @@ async def test_terminal_setup_failure_is_persisted_before_retry_wrapper(
         error=ANY,
     )
     engine.dispose.assert_awaited_once_with()
+
+
+def test_actor_time_limit_uses_separate_counter_and_keeps_retry_trigger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    message = SimpleNamespace(options={})
+    monkeypatch.setattr(
+        CurrentMessage,
+        "get_current_message",
+        staticmethod(lambda: message),
+    )
+
+    async def time_out(presentation_id: int, *, terminal_failure: bool) -> None:
+        del presentation_id, terminal_failure
+        raise TimeLimitExceeded()
+
+    monkeypatch.setattr(worker_tasks, "_generate", time_out)
+    with pytest.raises(dramatiq.Retry):
+        worker_tasks._run_generation_actor(7)
+
+    assert message.options["generation_timeouts"] == 1
+    assert "generation_runtime_failures" not in message.options
+
+
+def test_exhausted_timeouts_finalize_without_starting_another_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    message = SimpleNamespace(options={"generation_timeouts": 4})
+    monkeypatch.setattr(
+        CurrentMessage,
+        "get_current_message",
+        staticmethod(lambda: message),
+    )
+    finalizer = AsyncMock(return_value=True)
+    generate = AsyncMock()
+    monkeypatch.setattr(worker_tasks, "_finalize_timed_out_presentation", finalizer)
+    monkeypatch.setattr(worker_tasks, "_generate", generate)
+
+    worker_tasks._run_generation_actor(7)
+
+    finalizer.assert_awaited_once_with(7)
+    generate.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("retries", "terminal"), [(0, False), (3, True)])
+def test_paid_outline_time_limit_recovers_before_broker_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    retries: int,
+    terminal: bool,
+) -> None:
+    message = SimpleNamespace(options={"retries": retries})
+    monkeypatch.setattr(
+        CurrentMessage,
+        "get_current_message",
+        staticmethod(lambda: message),
+    )
+
+    async def time_out(order_id: int) -> None:
+        del order_id
+        raise TimeLimitExceeded()
+
+    recovery = AsyncMock(return_value=True)
+    monkeypatch.setattr(worker_tasks, "_process_paid_order", time_out)
+    monkeypatch.setattr(worker_tasks, "_recover_paid_order_timeout", recovery)
+
+    with pytest.raises(RuntimeError, match="paid outline actor timed out"):
+        worker_tasks._run_paid_order_actor(11)
+
+    recovery.assert_awaited_once_with(11, terminal_failure=terminal)

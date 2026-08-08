@@ -5,7 +5,7 @@ import logging
 
 import dramatiq
 from dramatiq.brokers.redis import RedisBroker
-from dramatiq.middleware import CurrentMessage
+from dramatiq.middleware import CurrentMessage, TimeLimitExceeded
 from sqlalchemy import select
 
 from core.config import get_settings
@@ -15,6 +15,7 @@ from modules.presentations.delivery import (
     DeliveryInProgress,
     DeliveryLeaseLost,
     TelegramArtifactDelivery,
+    mark_terminal_delivery_timeout,
 )
 from modules.presentations.engine import NodePresentationRenderer
 from modules.presentations.generation import (
@@ -38,6 +39,8 @@ _broker.add_middleware(CurrentMessage())  # type: ignore[no-untyped-call]
 dramatiq.set_broker(_broker)
 
 _RUNTIME_FAILURES_OPTION = "generation_runtime_failures"
+_TIMEOUT_FAILURES_OPTION = "generation_timeouts"
+_TIMEOUT_RETRY_DELAY_MS = 60_000
 
 
 class GenerationAttemptError(RuntimeError):
@@ -84,6 +87,20 @@ def _record_runtime_failure() -> int:
     failures = max(0, current) + 1
     if message is not None:
         message.options[_RUNTIME_FAILURES_OPTION] = failures
+    return failures
+
+
+def _current_timeout_failures() -> int:
+    message = CurrentMessage.get_current_message()
+    failures = 0 if message is None else int(message.options.get(_TIMEOUT_FAILURES_OPTION, 0))
+    return max(0, failures)
+
+
+def _record_timeout_failure() -> int:
+    message = CurrentMessage.get_current_message()
+    failures = _current_timeout_failures() + 1
+    if message is not None:
+        message.options[_TIMEOUT_FAILURES_OPTION] = failures
     return failures
 
 
@@ -186,7 +203,43 @@ async def _generate(presentation_id: int, *, terminal_failure: bool = False) -> 
         await engine.dispose()
 
 
+async def _finalize_timed_out_presentation(presentation_id: int) -> bool:
+    settings = get_settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    timeout = TimeoutError("Dramatiq actor time limit exhausted")
+    try:
+        if await mark_terminal_generation_failure(
+            factory,
+            presentation_id=presentation_id,
+            error=timeout,
+        ):
+            return True
+        return await mark_terminal_delivery_timeout(
+            factory,
+            presentation_id=presentation_id,
+            error=timeout,
+        )
+    finally:
+        await engine.dispose()
+
+
 def _run_generation_actor(presentation_id: int) -> None:
+    if _current_timeout_failures() > _settings.generation_max_retries:
+        try:
+            resolved = asyncio.run(_finalize_timed_out_presentation(presentation_id))
+        except Exception:
+            logger.exception(
+                "timed-out presentation finalization failed presentation_id=%s",
+                presentation_id,
+            )
+            resolved = False
+        if resolved:
+            return
+        raise dramatiq.Retry(  # type: ignore[no-untyped-call]
+            "waiting for timed-out presentation lease recovery",
+            delay=_TIMEOUT_RETRY_DELAY_MS,
+        )
     try:
         asyncio.run(
             _generate(
@@ -194,6 +247,12 @@ def _run_generation_actor(presentation_id: int) -> None:
                 terminal_failure=_current_failure_progress_step() == "failed",
             )
         )
+    except TimeLimitExceeded as exc:
+        _record_timeout_failure()
+        raise dramatiq.Retry(  # type: ignore[no-untyped-call]
+            "presentation actor timed out; waiting for fenced recovery",
+            delay=_TIMEOUT_RETRY_DELAY_MS,
+        ) from exc
     except dramatiq.Retry:
         raise
     except Exception as exc:
@@ -264,6 +323,44 @@ async def _process_paid_order(order_id: int) -> None:
         await engine.dispose()
 
 
+async def _recover_paid_order_timeout(order_id: int, *, terminal_failure: bool) -> bool:
+    from modules.presentations.service import PresentationService
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            return await PresentationService().recover_paid_outline_timeout(
+                session,
+                order_id=order_id,
+                terminal_failure=terminal_failure,
+            )
+    finally:
+        await engine.dispose()
+
+
+def _run_paid_order_actor(order_id: int) -> None:
+    message = CurrentMessage.get_current_message()
+    retries = 0 if message is None else int(message.options.get("retries", 0))
+    terminal_failure = retries >= _settings.generation_max_retries
+    try:
+        asyncio.run(_process_paid_order(order_id))
+    except TimeLimitExceeded as exc:
+        recovered = asyncio.run(
+            _recover_paid_order_timeout(
+                order_id,
+                terminal_failure=terminal_failure,
+            )
+        )
+        if not recovered:
+            raise dramatiq.Retry(  # type: ignore[no-untyped-call]
+                "waiting for paid outline timeout recovery",
+                delay=_TIMEOUT_RETRY_DELAY_MS,
+            ) from exc
+        raise RuntimeError("paid outline actor timed out") from exc
+
+
 @dramatiq.actor(
     queue_name="generation",
     max_retries=_settings.generation_max_retries,
@@ -296,7 +393,7 @@ def generate_priority_presentation(presentation_id: int) -> None:
     time_limit=180_000,
 )
 def process_paid_order(order_id: int) -> None:
-    asyncio.run(_process_paid_order(order_id))
+    _run_paid_order_actor(order_id)
 
 
 @dramatiq.actor(queue_name="health", max_retries=0, time_limit=10_000)

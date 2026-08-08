@@ -12,7 +12,11 @@ from modules.files.storage import LocalStorage
 from modules.orders.domain import OrderStatus
 from modules.orders.models import Order
 from modules.plans.models import Plan
-from modules.presentations.delivery import DeliveryInProgress, TelegramArtifactDelivery
+from modules.presentations.delivery import (
+    DeliveryInProgress,
+    TelegramArtifactDelivery,
+    mark_terminal_delivery_timeout,
+)
 from modules.presentations.models import GenerationJob, Presentation
 from modules.users.models import User
 
@@ -156,4 +160,29 @@ async def test_delivery_retries_only_the_missing_telegram_file(tmp_path: Path) -
         await delivery.deliver(factory, presentation_id=presentation_id, bot=active_lease_bot)
     assert 100_000 <= raised.value.retry_after_ms <= 125_000
     assert active_lease_bot.filenames == []
+
+    active_timeout = await mark_terminal_delivery_timeout(
+        factory,
+        presentation_id=presentation_id,
+        error=TimeoutError("delivery timed out"),
+    )
+    assert active_timeout is False
+    async with factory() as session, session.begin():
+        saved = await session.get(Presentation, presentation_id, with_for_update=True)
+        assert saved is not None and saved.delivery_status == "SENDING"
+        saved.delivery_lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    expired_timeout = await mark_terminal_delivery_timeout(
+        factory,
+        presentation_id=presentation_id,
+        error=TimeoutError("delivery timed out"),
+    )
+    assert expired_timeout is True
+    async with factory() as session:
+        saved = await session.get(Presentation, presentation_id)
+        job = await session.get(GenerationJob, 1)
+    assert saved is not None and saved.delivery_status == "FAILED"
+    assert saved.delivery_lease_token is None and saved.delivery_lease_expires_at is None
+    assert job is not None and job.status == "DELIVERY_FAILED"
+    assert job.current_step == "delivery_failed"
     await engine.dispose()

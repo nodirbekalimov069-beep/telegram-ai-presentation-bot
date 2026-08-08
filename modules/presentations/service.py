@@ -302,6 +302,41 @@ class PresentationService:
                 reason=reason,
             )
 
+    async def recover_paid_outline_timeout(
+        self,
+        session: AsyncSession,
+        *,
+        order_id: int,
+        terminal_failure: bool,
+    ) -> bool:
+        """Recover a paid outline actor interrupted by its hard time limit."""
+
+        async with session.begin():
+            order = await session.scalar(
+                select(Order).where(Order.id == order_id).with_for_update()
+            )
+            if order is None:
+                return False
+            current = OrderStatus(order.status)
+            if current in {
+                OrderStatus.PAID,
+                OrderStatus.WAITING_OUTLINE_APPROVAL,
+                OrderStatus.FAILED,
+                OrderStatus.CANCELLED,
+            }:
+                return True
+            if current != OrderStatus.OUTLINE_GENERATING:
+                return False
+            presentation = await session.scalar(
+                select(Presentation).where(Presentation.order_id == order_id).with_for_update()
+            )
+            target = OrderStatus.FAILED if terminal_failure else OrderStatus.PAID
+            order.status = target
+            if presentation is not None:
+                presentation.status = target
+                presentation.error_message = "TimeoutError: paid outline actor timed out"
+            return True
+
     async def cancel_outline(self, session: AsyncSession, *, presentation_id: int) -> bool:
         async with session.begin():
             reference = await session.get(Presentation, presentation_id)

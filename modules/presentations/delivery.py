@@ -41,6 +41,61 @@ class DeliveryResult:
     pdf_message_id: int | None
 
 
+async def mark_terminal_delivery_timeout(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    presentation_id: int,
+    error: Exception,
+) -> bool:
+    """Fence and persist exhausted delivery timeout recovery."""
+
+    now = datetime.now(UTC)
+    detail = f"{type(error).__name__}: terminal artifact delivery timeout"
+    async with session_factory() as session, session.begin():
+        reference = await session.get(Presentation, presentation_id)
+        if reference is None:
+            return False
+        order = await session.scalar(
+            select(Order).where(Order.id == reference.order_id).with_for_update()
+        )
+        presentation = await session.scalar(
+            select(Presentation).where(Presentation.id == presentation_id).with_for_update()
+        )
+        if order is None or presentation is None:
+            return False
+        if OrderStatus(order.status) == OrderStatus.CANCELLED:
+            return True
+        if presentation.delivery_status == "DELIVERED":
+            return True
+        if presentation.status == OrderStatus.FAILED:
+            return True
+        if presentation.status != OrderStatus.COMPLETED:
+            return False
+        expires_at = presentation.delivery_lease_expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if (
+            presentation.delivery_status == "SENDING"
+            and expires_at is not None
+            and expires_at > now
+        ):
+            return False
+        job = await session.scalar(
+            select(GenerationJob)
+            .where(GenerationJob.presentation_id == presentation_id)
+            .with_for_update()
+        )
+        presentation.delivery_status = "FAILED"
+        presentation.delivery_error = detail
+        presentation.delivery_lease_token = None
+        presentation.delivery_lease_expires_at = None
+        if job is not None:
+            job.status = "DELIVERY_FAILED"
+            job.current_step = "delivery_failed"
+            job.error_message = detail
+        return True
+
+
 class TelegramArtifactDelivery:
     def __init__(
         self,

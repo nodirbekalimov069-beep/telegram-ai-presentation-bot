@@ -77,6 +77,13 @@ def test_parse_quick_request_understands_uzbek_slaydli_suffix() -> None:
             )
 
 
+def test_parse_quick_request_removes_count_prefix_from_topic() -> None:
+    request = parse_quick_request("12 slayd AI haqida", language="uz")
+
+    assert request.slide_count == 12
+    assert request.topic == "AI"
+
+
 def test_quick_visual_preferences_map_only_to_supported_generation_settings() -> None:
     request = parse_quick_request(
         "Menga AI haqida rasmlar bilan 12 sahifali rangli slayd tayyorla",
