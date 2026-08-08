@@ -25,16 +25,17 @@ test -f .env || cp .env.example .env
 
 Command mavjud `.env` faylini overwrite qilmaydi.
 
-`.env` ichida quyidagi uch qiymatni kiriting:
+`.env` ichida quyidagi credentiallarni kiriting va botni faqat kontrolli test uchun yoqing:
 
 ```dotenv
 TELEGRAM_BOT_TOKEN=<BotFather tokeni>
 OWNER_TELEGRAM_ID=<raqamli Telegram ID>
 AI_API_KEY=<API kalit>
+BOT_ENABLED=true
 ```
 
-`.env.example`da `BOT_PRIVATE_MODE=true`, `AI_PROVIDER=openai` va
-`AI_MODEL=gpt-4.1-mini` oldindan sozlangan. Batafsil, sodda yo‘riqnoma:
+`.env.example`da safe default sifatida `BOT_ENABLED=false`, `BOT_PRIVATE_MODE=true`,
+`AI_PROVIDER=openai` va `AI_MODEL=gpt-4.1-mini` sozlangan. Batafsil, sodda yo‘riqnoma:
 [Private Telegram test](docs/PRIVATE_TEST.md).
 
 So‘ng:
@@ -65,14 +66,18 @@ docker compose down
 ### Polling — lokal/default
 
 ```dotenv
+BOT_ENABLED=true
 TELEGRAM_MODE=polling
 ```
 
-Standart `docker compose up -d` bot service’ni ishga tushiradi.
+`BOT_ENABLED=true` bo‘lsa `docker compose up -d` bitta polling consumer’ni ishga
+tushiradi. Default `false` holatda bot container healthy-idle turadi va `getUpdates`
+chaqirmaydi.
 
 ### Webhook — production
 
 ```dotenv
+BOT_ENABLED=true
 TELEGRAM_MODE=webhook
 PUBLIC_BASE_URL=https://bot.example.com
 TELEGRAM_WEBHOOK_SECRET=<kuchli-tasodifiy-qiymat>
