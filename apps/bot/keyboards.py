@@ -53,7 +53,10 @@ def choices_keyboard(
     columns: int = 2,
 ) -> ReplyKeyboardMarkup:
     rows = [
-        [KeyboardButton(text=value) for value in options[index : index + columns]]
+        [
+            KeyboardButton(text=localizer.option_label(language, value))
+            for value in options[index : index + columns]
+        ]
         for index in range(0, len(options), columns)
     ]
     rows.append(
@@ -63,7 +66,24 @@ def choices_keyboard(
         ]
     )
     rows.append([KeyboardButton(text=localizer.text(language, "common.main_menu"))])
-    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def resolve_choice(
+    value: str | None,
+    options: Sequence[str],
+    localizer: Localizer,
+    language: str,
+) -> str | None:
+    text = (value or "").strip()
+    for option in options:
+        if text in {option, localizer.option_label(language, option)}:
+            return option
+    return None
 
 
 def outline_actions(
@@ -96,5 +116,22 @@ def outline_actions(
                     callback_data=f"outline:cancel{suffix}",
                 )
             ],
+        ]
+    )
+
+
+def generation_cancel_action(
+    localizer: Localizer,
+    language: str,
+    presentation_id: int,
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=localizer.text(language, "common.cancel"),
+                    callback_data=f"outline:cancel:{presentation_id}",
+                )
+            ]
         ]
     )

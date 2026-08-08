@@ -37,6 +37,27 @@ async def test_progress_reporter_edits_one_telegram_message_for_all_checkpoints(
 
 
 @pytest.mark.asyncio
+async def test_progress_reporter_distinguishes_retrying_from_terminal_failure() -> None:
+    bot = AsyncMock()
+    reporter = TelegramProgressReporter(
+        bot=bot,
+        chat_id=555,
+        message_id=1234,
+        language="en",
+    )
+
+    await reporter(0, "retrying")
+    await reporter(0, "failed")
+
+    assert bot.edit_message_text.await_args_list[0].kwargs["text"] == (
+        "0% · ♻️ A temporary error occurred. Retrying automatically..."
+    )
+    assert bot.edit_message_text.await_args_list[1].kwargs["text"] == (
+        "⚠️ An error occurred while preparing the presentation."
+    )
+
+
+@pytest.mark.asyncio
 async def test_progress_reporter_shows_friendly_generation_failure() -> None:
     bot = AsyncMock()
     reporter = TelegramProgressReporter(

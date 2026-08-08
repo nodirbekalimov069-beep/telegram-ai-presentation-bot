@@ -109,17 +109,13 @@ DESIGN_STYLES = (
     "technology",
     "dark",
     "light",
-    "luxury",
     "corporate",
     "startup",
     "children",
     "medical",
     "historical",
 )
-COLOR_STYLES = ("ai", "light", "dark", "blue", "green", "purple", "warm", "monochrome")
 KNOWLEDGE_LEVELS = ("beginner", "intermediate", "advanced")
-IMAGE_AMOUNTS = ("none", "few", "balanced", "many")
-FILE_FORMATS = ("pptx", "pdf", "pptx+pdf")
 PLAN_CODES = ("free_demo", "medium", "premium", "premium_plus")
 
 

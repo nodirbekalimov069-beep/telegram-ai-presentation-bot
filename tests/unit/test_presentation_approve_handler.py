@@ -75,6 +75,134 @@ async def test_text_cancel_does_not_report_success_while_outline_is_generating(
 
 
 @pytest.mark.asyncio
+async def test_waiting_payment_cancel_persists_before_reporting_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=555),
+        answer=AsyncMock(),
+    )
+    state = AsyncMock(spec=FSMContext)
+    state.get_data.return_value = {"order_id": 8, "language": "uz"}
+    state.get_state.return_value = PresentationFlow.waiting_payment.state
+    session = AsyncMock(spec=AsyncSession)
+    events: list[str] = []
+
+    async def cancel_payment(*args: object, **kwargs: object) -> bool:
+        del args, kwargs
+        events.append("cancel")
+        return True
+
+    order_service = Mock(cancel_waiting_payment=AsyncMock(side_effect=cancel_payment))
+    user = SimpleNamespace(id=9, selected_language="uz")
+    menu = AsyncMock()
+
+    async def load_user(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        events.append("user")
+        return user
+
+    monkeypatch.setattr(presentation_handlers, "OrderService", Mock(return_value=order_service))
+    monkeypatch.setattr(presentation_handlers, "current_user", AsyncMock(side_effect=load_user))
+    monkeypatch.setattr(presentation_handlers, "show_main_menu", menu)
+
+    await presentation_handlers.cancel_flow(
+        message,
+        state,
+        session,
+        Localizer.load_default(),
+        Settings(app_env="test"),
+    )
+
+    order_service.cancel_waiting_payment.assert_awaited_once_with(
+        session,
+        order_id=8,
+        telegram_user_id=555,
+    )
+    state.clear.assert_awaited_once_with()
+    message.answer.assert_awaited_once_with("Jarayon bekor qilindi.")
+    menu.assert_awaited_once()
+    assert events[0] == "cancel"
+
+
+@pytest.mark.asyncio
+async def test_stale_cancel_button_does_not_claim_an_active_job_was_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    message = SimpleNamespace(from_user=SimpleNamespace(id=555), answer=AsyncMock())
+    state = AsyncMock(spec=FSMContext)
+    state.get_data.return_value = {}
+    state.get_state.return_value = None
+    user = SimpleNamespace(id=9, selected_language="uz")
+    show_menu_mock = AsyncMock()
+    presentation_service = Mock()
+    presentation_service.cancel_outline = AsyncMock()
+    order_service = Mock()
+    order_service.cancel_waiting_payment = AsyncMock()
+    monkeypatch.setattr(
+        presentation_handlers,
+        "current_user",
+        AsyncMock(return_value=user),
+    )
+    monkeypatch.setattr(presentation_handlers, "show_main_menu", show_menu_mock)
+    monkeypatch.setattr(
+        presentation_handlers,
+        "PresentationService",
+        Mock(return_value=presentation_service),
+    )
+    monkeypatch.setattr(
+        presentation_handlers,
+        "OrderService",
+        Mock(return_value=order_service),
+    )
+
+    await presentation_handlers.cancel_flow(
+        message,
+        state,
+        AsyncMock(spec=AsyncSession),
+        Localizer.load_default(),
+        Settings(app_env="test"),
+    )
+
+    presentation_service.cancel_outline.assert_not_awaited()
+    order_service.cancel_waiting_payment.assert_not_awaited()
+    state.clear.assert_awaited_once_with()
+    message.answer.assert_awaited_once_with("Faol jarayon topilmadi.")
+    show_menu_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_back_from_direction_returns_to_language_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    message = SimpleNamespace(from_user=SimpleNamespace(id=555), answer=AsyncMock())
+    state = AsyncMock(spec=FSMContext)
+    state.get_data.return_value = {"language": "ru"}
+    state.get_state.return_value = PresentationFlow.direction.state
+    menu = AsyncMock()
+    monkeypatch.setattr(presentation_handlers, "show_main_menu", menu)
+    monkeypatch.setattr(
+        presentation_handlers,
+        "current_user",
+        AsyncMock(return_value=SimpleNamespace(id=9)),
+    )
+
+    await presentation_handlers.back_flow(
+        message,
+        state,
+        AsyncMock(spec=AsyncSession),
+        Localizer.load_default(),
+        Settings(app_env="test"),
+    )
+
+    state.set_state.assert_awaited_once_with(PresentationFlow.language)
+    message.answer.assert_awaited_once()
+    assert message.answer.await_args.args[0] == "Выберите язык:"
+    assert message.answer.await_args.kwargs["reply_markup"] is not None
+    menu.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_approve_outline_reuses_preview_as_durable_progress_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -130,18 +258,81 @@ async def test_approve_outline_reuses_preview_as_durable_progress_message(
         Settings(app_env="test"),
     )
 
-    edit_text.assert_awaited_once_with(
+    edit_text.assert_awaited_once()
+    assert edit_text.await_args is not None
+    assert edit_text.await_args.args[0] == (
         "0% · ⏳ Buyurtma navbatga qo‘yildi. Holat shu xabarda yangilanadi."
     )
+    cancel_markup = edit_text.await_args.kwargs["reply_markup"]
+    assert cancel_markup.inline_keyboard[0][0].callback_data == "outline:cancel:7"
     service.approve_outline.assert_awaited_once_with(
         session,
         presentation_id=7,
         progress_chat_id=555,
         progress_message_id=1234,
     )
-    state.set_state.assert_awaited_once()
+    state.clear.assert_awaited_once_with()
+    state.set_state.assert_not_awaited()
     answer_callback.assert_awaited_once_with()
     assert events == ["database", "telegram"]
+
+
+@pytest.mark.asyncio
+async def test_design_style_moves_directly_to_plan_selection() -> None:
+    message = SimpleNamespace(text="Zamonaviy", answer=AsyncMock())
+    state = AsyncMock(spec=FSMContext)
+    state.get_data.return_value = {"language": "uz"}
+
+    await presentation_handlers.design_style(message, state, Localizer.load_default())
+
+    state.update_data.assert_awaited_once_with(design_style="modern")
+    state.set_state.assert_awaited_once_with(PresentationFlow.plan)
+    message.answer.assert_awaited_once()
+    assert message.answer.await_args.args[0] == "Tarifni tanlang:"
+
+
+@pytest.mark.asyncio
+async def test_two_character_topic_advances_the_fsm() -> None:
+    message = SimpleNamespace(text="AI", answer=AsyncMock())
+    state = AsyncMock(spec=FSMContext)
+    state.get_data.return_value = {"language": "en"}
+
+    await presentation_handlers.topic(message, state, Localizer.load_default())
+
+    state.update_data.assert_awaited_once_with(topic="AI")
+    state.set_state.assert_awaited_once_with(PresentationFlow.purpose)
+
+
+@pytest.mark.asyncio
+async def test_authorized_context_uses_presentation_language_not_profile_language() -> None:
+    callback: Any = SimpleNamespace(
+        data="outline:edit:7",
+        from_user=SimpleNamespace(id=555),
+    )
+    state = AsyncMock(spec=FSMContext)
+    state.get_data.return_value = {}
+    row = Mock()
+    row.one_or_none.return_value = (8, "en")
+    session = AsyncMock(spec=AsyncSession)
+    session.execute.return_value = row
+
+    result = await presentation_handlers._authorized_presentation_context(
+        callback,
+        state,
+        session,
+        "edit",
+    )
+
+    assert result == (7, 8, "en")
+    statement = str(session.execute.await_args.args[0])
+    assert "presentations.language" in statement
+    assert "users.selected_language" not in statement
+    state.update_data.assert_awaited_once_with(
+        presentation_id=7,
+        order_id=8,
+        language="en",
+        outline_action="edit",
+    )
 
 
 @pytest.mark.asyncio

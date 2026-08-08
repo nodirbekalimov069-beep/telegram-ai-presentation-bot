@@ -27,7 +27,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 _SLIDE_COUNT_RE = re.compile(
-    r"(?P<count>\d{1,2})\s*(?:ta\s*)?(?:slayd|sahifa|bet|page)",
+    r"(?<![0-9])(?P<count>[0-9]+)(?![0-9])\s*(?:[-–—]\s*)?(?:ta\s*)?"
+    r"(?:slayd(?:lar|li)?|sahifa(?:li)?|bet|pages?|slides?|слайд(?:ов|а|ы)?)\b",
     re.IGNORECASE,
 )
 _IMAGE_WORDS = ("rasm", "image", "photo", "foto", "картин", "изображ")
@@ -52,11 +53,23 @@ class QuickPresentationArtifacts:
     pdf_path: Path
 
 
+class QuickPresentationRequestError(ValueError):
+    """Raised when a free-form request cannot map to a supported plan."""
+
+
 class QuickPresentationUnavailable(RuntimeError):
     """Raised when the secure quick-generation path is unavailable."""
 
 
-def _extract_topic(text: str) -> str:
+def _extract_topic(text: str, *, language: str) -> str:
+    if language == "en":
+        match = re.search(r"\babout\s+(.+)$", text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip(" ,.-:")[:80]
+    if language == "ru":
+        match = re.search(r"\b(?:о|об)\s+(.+)$", text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip(" ,.-:")[:80]
     topic = re.sub(
         r"^(?:menga|iltimos|please|пожалуйста|мне)\s+",
         "",
@@ -65,7 +78,7 @@ def _extract_topic(text: str) -> str:
     )
     topic = re.split(
         r"\s+(?:haqida|to['\u2018\u2019]?g['\u2018\u2019]?risida|rasmlar?\s+bilan|"
-        r"slaydga|slayd\s+qilib|презентац|слайд)\b",
+        r"slaydga|slayd\s+qilib|презентац|слайд|presentation|slides?)\b",
         topic,
         maxsplit=1,
         flags=re.IGNORECASE,
@@ -78,14 +91,19 @@ def parse_quick_request(text: str, *, language: str) -> QuickPresentationRequest
     """Extract safe deterministic defaults from a free-form user request."""
     normalized = " ".join(text.split()).strip()
     if len(normalized) < 3:
-        raise ValueError("presentation request is too short")
+        raise QuickPresentationRequestError("presentation request is too short")
     match = _SLIDE_COUNT_RE.search(normalized)
-    slide_count = int(match.group("count")) if match else 8
+    raw_count = match.group("count") if match else "8"
+    if len(raw_count) > 2:
+        raise QuickPresentationRequestError("slide count must be between 1 and 30")
+    slide_count = int(raw_count)
     if not 1 <= slide_count <= 30:
-        raise ValueError("slide count must be between 1 and 30")
+        raise QuickPresentationRequestError("slide count must be between 1 and 30")
+    if slide_count == 9:
+        raise QuickPresentationRequestError("slide count must be 1–8 or 10–30")
     lowered = normalized.casefold()
     return QuickPresentationRequest(
-        topic=_extract_topic(normalized),
+        topic=_extract_topic(normalized, language=language),
         language=language if language in {"uz", "ru", "en"} else "uz",
         slide_count=slide_count,
         include_images=any(word in lowered for word in _IMAGE_WORDS),
@@ -103,7 +121,7 @@ def select_plan_code(slide_count: int) -> str:
         return "premium"
     if 21 <= slide_count <= 30:
         return "premium_plus"
-    raise ValueError("no active plan supports this slide count")
+    raise QuickPresentationRequestError("no active plan supports this slide count")
 
 
 def _slide_sort_key(name: str) -> int:
@@ -201,18 +219,39 @@ class PptxTextPdfConverter:
 
 
 def _request_settings(request: QuickPresentationRequest) -> dict[str, object]:
+    directions = {
+        "uz": "Dasturlash",
+        "ru": "Программирование",
+        "en": "Programming",
+    }
+    audiences = {
+        "uz": "Umumiy auditoriya",
+        "ru": "Широкая аудитория",
+        "en": "General audience",
+    }
+    purposes = {
+        "uz": (
+            "Bosqichma-bosqich tushuntirish",
+            "Bosqichma-bosqich tushuntirish; vizual misollar va diagrammalardan foydalanish",
+        ),
+        "ru": (
+            "Пошаговое объяснение",
+            "Пошаговое объяснение с визуальными примерами и диаграммами",
+        ),
+        "en": (
+            "Step-by-step explanation",
+            "Step-by-step explanation with visual examples and diagrams",
+        ),
+    }
+    standard_purpose, visual_purpose = purposes[request.language]
     return {
         "language": request.language,
-        "direction": "Texnologiya va dasturlash",
-        "purpose": "Bosqichma-bosqich tushuntirish",
-        "audience": "Umumiy auditoriya",
+        "direction": directions[request.language],
+        "purpose": visual_purpose if request.include_images else standard_purpose,
+        "audience": audiences[request.language],
         "knowledge_level": "beginner",
         "slide_count": request.slide_count,
-        "design_style": "modern",
-        "color_style": "vibrant" if request.colorful else "professional",
-        "image_amount": "balanced" if request.include_images else "minimal",
-        "diagram": False,
-        "file_format": "both",
+        "design_style": "creative" if request.colorful else "modern",
     }
 
 

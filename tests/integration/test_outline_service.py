@@ -300,3 +300,79 @@ async def test_unpaid_created_order_cannot_trigger_ai_with_prompt_injection(tmp_
     assert saved_order is not None and saved_order.status == OrderStatus.CREATED
     assert saved_presentation is None
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_queued_cancellation_updates_order_presentation_and_job(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'queued-cancel.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        await seed_default_plans(session)
+    async with factory() as session, session.begin():
+        user = User(telegram_user_id=999, selected_language="uz")
+        session.add(user)
+        await session.flush()
+        plan = await session.scalar(select(Plan).where(Plan.code == "medium"))
+        assert plan is not None
+        order = Order(
+            user_id=user.id,
+            plan_id=plan.id,
+            amount=plan.price_uzs,
+            currency="UZS",
+            status=OrderStatus.QUEUED,
+            topic="Queued cancellation",
+            settings={"slide_count": 10},
+        )
+        session.add(order)
+        await session.flush()
+        presentation = Presentation(
+            order_id=order.id,
+            user_id=user.id,
+            title=order.topic,
+            topic=order.topic,
+            language="uz",
+            direction="Ta’lim",
+            audience="Talabalar",
+            slide_count=10,
+            design_style="modern",
+            outline={},
+            content={},
+            status=OrderStatus.QUEUED,
+        )
+        session.add(presentation)
+        await session.flush()
+        job = GenerationJob(
+            presentation_id=presentation.id,
+            status="QUEUED",
+            progress=0,
+            current_step="queued",
+        )
+        session.add(job)
+        await session.flush()
+        presentation_id = presentation.id
+        order_id = order.id
+        job_id = job.id
+
+    async with factory() as session:
+        cancelled = await PresentationService().cancel_outline(
+            session,
+            presentation_id=presentation_id,
+        )
+    async with factory() as session:
+        duplicate = await PresentationService().cancel_outline(
+            session,
+            presentation_id=presentation_id,
+        )
+        saved_order = await session.get(Order, order_id)
+        saved_presentation = await session.get(Presentation, presentation_id)
+        saved_job = await session.get(GenerationJob, job_id)
+
+    assert cancelled is True
+    assert duplicate is False
+    assert saved_order is not None and saved_order.status == OrderStatus.CANCELLED
+    assert saved_presentation is not None and saved_presentation.status == OrderStatus.CANCELLED
+    assert saved_job is not None and saved_job.status == "CANCELLED"
+    assert saved_job.current_step == "cancelled"
+    await engine.dispose()

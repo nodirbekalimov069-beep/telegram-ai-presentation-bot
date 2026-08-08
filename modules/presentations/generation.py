@@ -58,6 +58,79 @@ class GenerationResult:
     pdf_storage_key: str
 
 
+async def mark_terminal_generation_failure(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    presentation_id: int,
+    error: Exception,
+) -> bool:
+    """Persist terminal failure when setup exits before normal attempt recovery."""
+
+    detail = f"{type(error).__name__}: terminal generation failure"
+    now = datetime.now(UTC)
+    machine = OrderStateMachine()
+    async with session_factory() as session, session.begin():
+        reference = await session.get(Presentation, presentation_id)
+        if reference is None:
+            return False
+        order = await session.scalar(
+            select(Order).where(Order.id == reference.order_id).with_for_update()
+        )
+        presentation = await session.scalar(
+            select(Presentation).where(Presentation.id == presentation_id).with_for_update()
+        )
+        if order is None or presentation is None:
+            return False
+        job = await session.scalar(
+            select(GenerationJob)
+            .where(GenerationJob.presentation_id == presentation_id)
+            .with_for_update()
+        )
+        if job is None:
+            return False
+        current = OrderStatus(order.status)
+        if current == OrderStatus.CANCELLED or presentation.status == OrderStatus.COMPLETED:
+            return False
+        lease_expires_at = job.lease_expires_at
+        if lease_expires_at is not None and lease_expires_at.tzinfo is None:
+            lease_expires_at = lease_expires_at.replace(tzinfo=UTC)
+        if job.status == "RUNNING" and lease_expires_at is not None and lease_expires_at > now:
+            return False
+        if current == OrderStatus.FAILED and job.status == "FAILED":
+            return False
+        if current == OrderStatus.QUEUED:
+            current = machine.transition(current, OrderStatus.GENERATING)
+        if current != OrderStatus.FAILED:
+            if not machine.can_transition(current, OrderStatus.FAILED):
+                return False
+            current = machine.transition(current, OrderStatus.FAILED)
+        order.status = current
+        presentation.status = OrderStatus.FAILED
+        presentation.error_message = detail
+        job.status = "FAILED"
+        job.retries += 1
+        job.error_message = detail
+        job.current_step = "failed"
+        job.lease_token = None
+        job.lease_expires_at = None
+        job.heartbeat_at = now
+        attempt = await session.scalar(
+            select(GenerationAttempt)
+            .where(
+                GenerationAttempt.generation_job_id == job.id,
+                GenerationAttempt.status == "RUNNING",
+            )
+            .order_by(GenerationAttempt.id.desc())
+            .with_for_update()
+        )
+        if attempt is not None:
+            attempt.status = "FAILED"
+            attempt.error_message = detail
+            attempt.finished_at = now
+            attempt.heartbeat_at = now
+        return True
+
+
 class GenerationPipeline:
     def __init__(
         self,
@@ -80,6 +153,33 @@ class GenerationPipeline:
         *,
         presentation_id: int,
         progress_callback: ProgressCallback | None = None,
+        terminal_failure: bool = True,
+    ) -> GenerationResult:
+        try:
+            return await self._run_once(
+                session_factory,
+                presentation_id=presentation_id,
+                progress_callback=progress_callback,
+                terminal_failure=terminal_failure,
+            )
+        except (GenerationLeaseActive, GenerationLeaseLost):
+            raise
+        except Exception as error:
+            if terminal_failure:
+                await mark_terminal_generation_failure(
+                    session_factory,
+                    presentation_id=presentation_id,
+                    error=error,
+                )
+            raise
+
+    async def _run_once(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        presentation_id: int,
+        progress_callback: ProgressCallback | None = None,
+        terminal_failure: bool = True,
     ) -> GenerationResult:
         lease_token = uuid4().hex
         async with session_factory() as session, session.begin():
@@ -113,6 +213,14 @@ class GenerationPipeline:
                     pptx_storage_key=presentation.pptx_storage_key,
                     pdf_storage_key=presentation.pdf_storage_key,
                 )
+            current = OrderStatus(order.status)
+            if current == OrderStatus.CANCELLED:
+                return GenerationResult(
+                    presentation_id=presentation.id,
+                    completed=False,
+                    pptx_storage_key="",
+                    pdf_storage_key="",
+                )
             job = await session.scalar(
                 select(GenerationJob)
                 .where(GenerationJob.presentation_id == presentation.id)
@@ -129,7 +237,6 @@ class GenerationPipeline:
                 raise GenerationLeaseActive(
                     retry_after_ms=int((lease_expires_at - now).total_seconds() * 1_000) + 1_000
                 )
-            current = OrderStatus(order.status)
             if current == OrderStatus.FAILED:
                 current = self._machine.transition(current, OrderStatus.QUEUED)
                 order.status = current
@@ -287,6 +394,7 @@ class GenerationPipeline:
                 order_id,
                 lease_token,
                 exc,
+                terminal_failure=terminal_failure,
             )
             raise
 
@@ -385,6 +493,8 @@ class GenerationPipeline:
         order_id: int,
         lease_token: str,
         error: Exception,
+        *,
+        terminal_failure: bool,
     ) -> None:
         detail = f"{type(error).__name__}: {error}"[:2000]
         async with session_factory() as session, session.begin():
@@ -408,17 +518,26 @@ class GenerationPipeline:
             )
             if job is None or job.lease_token != lease_token:
                 return
-            if presentation is not None and presentation.status != OrderStatus.COMPLETED:
-                presentation.status = OrderStatus.FAILED
-                presentation.error_message = detail
             if order is not None and order.status != OrderStatus.COMPLETED:
                 current = OrderStatus(order.status)
-                if self._machine.can_transition(current, OrderStatus.FAILED):
-                    order.status = OrderStatus.FAILED
-            job.status = "FAILED"
+                if current == OrderStatus.FAILED and not terminal_failure:
+                    order.status = self._machine.transition(current, OrderStatus.QUEUED)
+                elif self._machine.can_transition(current, OrderStatus.FAILED):
+                    failed = self._machine.transition(current, OrderStatus.FAILED)
+                    order.status = (
+                        failed
+                        if terminal_failure
+                        else self._machine.transition(failed, OrderStatus.QUEUED)
+                    )
+            if presentation is not None and presentation.status != OrderStatus.COMPLETED:
+                presentation.status = (
+                    OrderStatus(order.status) if order is not None else OrderStatus.FAILED
+                )
+                presentation.error_message = detail
+            job.status = "FAILED" if terminal_failure else "RETRYING"
             job.retries += 1
             job.error_message = detail
-            job.current_step = "failed"
+            job.current_step = "failed" if terminal_failure else "retrying"
             job.lease_token = None
             job.lease_expires_at = None
             attempt = await session.scalar(

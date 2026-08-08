@@ -34,6 +34,21 @@ def test_user_topic_is_isolated_from_system_instructions() -> None:
     assert messages[1]["role"] == "user"
 
 
+def test_two_character_technology_topic_is_valid() -> None:
+    request = PresentationRequest(
+        topic="AI",
+        language="en",
+        direction="Technology",
+        purpose="Explain practical use",
+        audience="Students",
+        knowledge_level="beginner",
+        slide_count=8,
+        design_style="technology",
+    )
+
+    assert request.topic == "AI"
+
+
 def test_valid_outline_is_parsed_as_structured_data() -> None:
     raw = json.dumps(
         {

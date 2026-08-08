@@ -47,3 +47,7 @@ class Localizer:
         except KeyError as exc:
             raise LocalizationError(f"unknown translation key: {key}") from exc
         return template.format(**values)
+
+    def option_label(self, language: str, value: str) -> str:
+        catalog = self._catalogs.get(language, self._catalogs[self._fallback])
+        return catalog.get(f"option.{value}", value)

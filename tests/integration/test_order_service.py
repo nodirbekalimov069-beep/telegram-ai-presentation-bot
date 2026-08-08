@@ -60,7 +60,7 @@ async def test_user_registration_is_idempotent_and_updates_profile(order_db) -> 
 @pytest.mark.asyncio
 async def test_paid_order_amount_and_status_come_from_database_plan(order_db) -> None:  # type: ignore[no-untyped-def]
     async with order_db() as session:
-        user = await UserService().register(
+        await UserService().register(
             session,
             telegram_user_id=99,
             username=None,
@@ -71,15 +71,16 @@ async def test_paid_order_amount_and_status_come_from_database_plan(order_db) ->
     async with order_db() as session:
         order = await OrderService().create_paid_order(
             session,
-            user_id=user.id,
+            telegram_user_id=99,
             plan_code="premium",
-            topic="Sun’iy intellekt",
+            topic="AI",
             settings={"slide_count": 18, "language": "uz"},
         )
 
     assert order.amount == 5_000
     assert order.currency == "UZS"
     assert order.status == OrderStatus.WAITING_PAYMENT
+    assert order.topic == "AI"
 
 
 @pytest.mark.asyncio
@@ -105,3 +106,57 @@ async def test_paid_order_rejects_slide_count_outside_plan(order_db) -> None:  #
     async with order_db() as session:
         count = await session.scalar(select(func.count(Order.id)))
     assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_waiting_payment_cancellation_is_owner_scoped_and_idempotent(order_db) -> None:  # type: ignore[no-untyped-def]
+    async with order_db() as session:
+        owner = await UserService().register(
+            session,
+            telegram_user_id=101,
+            username=None,
+            first_name="Owner",
+            last_name=None,
+            language_code="uz",
+        )
+        await UserService().register(
+            session,
+            telegram_user_id=102,
+            username=None,
+            first_name="Other",
+            last_name=None,
+            language_code="uz",
+        )
+    async with order_db() as session:
+        order = await OrderService().create_paid_order(
+            session,
+            user_id=owner.id,
+            plan_code="medium",
+            topic="Bekor qilinadigan buyurtma",
+            settings={"slide_count": 10, "language": "uz"},
+        )
+
+    async with order_db() as session:
+        with pytest.raises(LookupError, match="order not found"):
+            await OrderService().cancel_waiting_payment(
+                session,
+                order_id=order.id,
+                telegram_user_id=102,
+            )
+    async with order_db() as session:
+        cancelled = await OrderService().cancel_waiting_payment(
+            session,
+            order_id=order.id,
+            telegram_user_id=101,
+        )
+    async with order_db() as session:
+        duplicate = await OrderService().cancel_waiting_payment(
+            session,
+            order_id=order.id,
+            telegram_user_id=101,
+        )
+        saved = await session.get(Order, order.id)
+
+    assert cancelled is True
+    assert duplicate is False
+    assert saved is not None and saved.status == OrderStatus.CANCELLED

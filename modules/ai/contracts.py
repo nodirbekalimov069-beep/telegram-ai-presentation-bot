@@ -15,7 +15,7 @@ class AIContractError(ValueError):
 class PresentationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
-    topic: str = Field(min_length=3, max_length=500)
+    topic: str = Field(min_length=2, max_length=500)
     language: Literal["uz", "ru", "en"]
     direction: str = Field(min_length=2, max_length=100)
     purpose: str = Field(min_length=2, max_length=300)

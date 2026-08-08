@@ -34,22 +34,38 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from apps.bot.fsm import PresentationFlow
 from apps.bot.handlers.common import current_user, show_main_menu
-from apps.bot.keyboards import choices_keyboard, language_keyboard, outline_actions
+from apps.bot.keyboards import (
+    choices_keyboard,
+    generation_cancel_action,
+    language_keyboard,
+    outline_actions,
+    resolve_choice,
+)
 from apps.bot.localization import Localizer
 from apps.bot.options import (
-    COLOR_STYLES,
     DESIGN_STYLES,
-    FILE_FORMATS,
-    IMAGE_AMOUNTS,
     KNOWLEDGE_LEVELS,
     PLAN_CODES,
     directions_for,
 )
-from apps.bot.quick_presentation import QuickPresentationService
+from apps.bot.quick_presentation import QuickPresentationRequestError, QuickPresentationService
 
 router = Router(name="presentation-flow")
 _localizer = Localizer.load_default()
 logger = logging.getLogger(__name__)
+_CANCELLABLE_INPUT_STATES = frozenset(
+    {
+        PresentationFlow.language.state,
+        PresentationFlow.direction.state,
+        PresentationFlow.topic.state,
+        PresentationFlow.purpose.state,
+        PresentationFlow.audience.state,
+        PresentationFlow.knowledge_level.state,
+        PresentationFlow.slide_count.state,
+        PresentationFlow.design_style.state,
+        PresentationFlow.plan.state,
+    }
+)
 
 
 def labels(key: str) -> set[str]:
@@ -99,6 +115,28 @@ async def cancel_flow(
             request_id = uuid4().hex[:12]
             await message.answer(localizer.text(language, "error.generic", request_id=request_id))
             return
+    elif current_state == PresentationFlow.waiting_payment.state or "order_id" in data:
+        try:
+            await OrderService().cancel_waiting_payment(
+                session,
+                order_id=int(data["order_id"]),
+                telegram_user_id=message.from_user.id,
+            )
+        except (KeyError, TypeError, ValueError, LookupError):
+            logger.exception(
+                "payment cancellation failed telegram_user_id=%s",
+                message.from_user.id,
+            )
+            language = str(data.get("language") or "uz")
+            await message.answer(localizer.text(language, "error.cancel_busy"))
+            return
+    elif current_state not in _CANCELLABLE_INPUT_STATES:
+        language = await _language(session, message.from_user.id)
+        await state.clear()
+        await message.answer(localizer.text(language, "common.no_active_flow"))
+        user = await current_user(session, message.from_user.id)
+        await show_main_menu(message, user=user, localizer=localizer, settings=settings)
+        return
     language = await _language(session, message.from_user.id)
     await state.clear()
     await message.answer(localizer.text(language, "create.cancelled"))
@@ -119,6 +157,13 @@ async def back_flow(
     data = await state.get_data()
     language = str(data.get("language") or await _language(session, message.from_user.id))
     current = await state.get_state()
+    if current == PresentationFlow.direction.state:
+        await state.set_state(PresentationFlow.language)
+        await message.answer(
+            localizer.text(language, "start.choose_language"),
+            reply_markup=language_keyboard(),
+        )
+        return
     back_steps = {
         PresentationFlow.topic.state: (
             PresentationFlow.direction,
@@ -138,27 +183,11 @@ async def back_flow(
             "create.slides",
             ("8", "10", "12", "15", "18", "20", "25", "30"),
         ),
-        PresentationFlow.color_style.state: (
+        PresentationFlow.plan.state: (
             PresentationFlow.design_style,
             "create.design",
             DESIGN_STYLES,
         ),
-        PresentationFlow.image_amount.state: (
-            PresentationFlow.color_style,
-            "create.color",
-            COLOR_STYLES,
-        ),
-        PresentationFlow.diagram.state: (
-            PresentationFlow.image_amount,
-            "create.images",
-            IMAGE_AMOUNTS,
-        ),
-        PresentationFlow.file_format.state: (
-            PresentationFlow.diagram,
-            "create.diagram",
-            ("yes", "no"),
-        ),
-        PresentationFlow.plan.state: (PresentationFlow.file_format, "create.format", FILE_FORMATS),
     }
     target = back_steps.get(current)
     if target is None:
@@ -191,7 +220,7 @@ async def _authorized_presentation_context(
         return None
     async with session.begin():
         row = await session.execute(
-            select(Presentation.order_id, User.selected_language)
+            select(Presentation.order_id, Presentation.language)
             .join(User, User.id == Presentation.user_id)
             .where(
                 Presentation.id == presentation_id,
@@ -323,7 +352,7 @@ async def topic(message: Message, state: FSMContext, localizer: Localizer) -> No
     data = await state.get_data()
     language = str(data["language"])
     value = (message.text or "").strip()
-    if not 3 <= len(value) <= 500:
+    if not 2 <= len(value) <= 500:
         await message.answer(localizer.text(language, "error.topic_length"))
         return
     await state.update_data(topic=value)
@@ -364,8 +393,8 @@ async def audience(message: Message, state: FSMContext, localizer: Localizer) ->
 async def knowledge_level(message: Message, state: FSMContext, localizer: Localizer) -> None:
     data = await state.get_data()
     language = str(data["language"])
-    value = message.text or ""
-    if value not in KNOWLEDGE_LEVELS:
+    value = resolve_choice(message.text, KNOWLEDGE_LEVELS, localizer, language)
+    if value is None:
         await message.answer(localizer.text(language, "create.knowledge"))
         return
     await state.update_data(knowledge_level=value)
@@ -405,59 +434,11 @@ async def slide_count(message: Message, state: FSMContext, localizer: Localizer)
 async def design_style(message: Message, state: FSMContext, localizer: Localizer) -> None:
     data = await state.get_data()
     language = str(data["language"])
-    value = message.text or ""
-    if value not in DESIGN_STYLES:
+    value = resolve_choice(message.text, DESIGN_STYLES, localizer, language)
+    if value is None:
         await message.answer(localizer.text(language, "create.design"))
         return
     await state.update_data(design_style=value)
-    await state.set_state(PresentationFlow.color_style)
-    await message.answer(
-        localizer.text(language, "create.color"),
-        reply_markup=choices_keyboard(COLOR_STYLES, localizer, language),
-    )
-
-
-@router.message(PresentationFlow.color_style)
-async def color_style(message: Message, state: FSMContext, localizer: Localizer) -> None:
-    data = await state.get_data()
-    language = str(data["language"])
-    await state.update_data(color_style=message.text or "ai")
-    await state.set_state(PresentationFlow.image_amount)
-    await message.answer(
-        localizer.text(language, "create.images"),
-        reply_markup=choices_keyboard(IMAGE_AMOUNTS, localizer, language),
-    )
-
-
-@router.message(PresentationFlow.image_amount)
-async def image_amount(message: Message, state: FSMContext, localizer: Localizer) -> None:
-    data = await state.get_data()
-    language = str(data["language"])
-    await state.update_data(image_amount=message.text or "balanced")
-    await state.set_state(PresentationFlow.diagram)
-    await message.answer(
-        localizer.text(language, "create.diagram"),
-        reply_markup=choices_keyboard(("yes", "no"), localizer, language),
-    )
-
-
-@router.message(PresentationFlow.diagram)
-async def diagram(message: Message, state: FSMContext, localizer: Localizer) -> None:
-    data = await state.get_data()
-    language = str(data["language"])
-    await state.update_data(diagram=(message.text or "no") == "yes")
-    await state.set_state(PresentationFlow.file_format)
-    await message.answer(
-        localizer.text(language, "create.format"),
-        reply_markup=choices_keyboard(FILE_FORMATS, localizer, language),
-    )
-
-
-@router.message(PresentationFlow.file_format)
-async def file_format(message: Message, state: FSMContext, localizer: Localizer) -> None:
-    data = await state.get_data()
-    language = str(data["language"])
-    await state.update_data(file_format=message.text or "pptx+pdf")
     await state.set_state(PresentationFlow.plan)
     await message.answer(
         localizer.text(language, "create.plan"),
@@ -475,11 +456,11 @@ async def choose_plan(
 ) -> None:
     if message.from_user is None:
         return
-    plan_code = message.text or ""
-    if plan_code not in PLAN_CODES:
-        return
     data = await state.get_data()
     language = str(data["language"])
+    plan_code = resolve_choice(message.text, PLAN_CODES, localizer, language)
+    if plan_code is None:
+        return
     try:
         if plan_code == "free_demo":
             order = await FreeDemoService().claim(
@@ -492,10 +473,9 @@ async def choose_plan(
                 ),
             )
         else:
-            user = await current_user(session, message.from_user.id)
             order = await OrderService().create_paid_order(
                 session,
-                user_id=user.id,
+                telegram_user_id=message.from_user.id,
                 plan_code=plan_code,
                 topic=str(data["topic"]),
                 settings=dict(data),
@@ -561,19 +541,28 @@ async def mock_payment(
         await callback.answer(localizer.text(language, "payment.disabled"), show_alert=True)
         return
     public_id = callback.data.split(":", 1)[1]
-    order = await session.scalar(select(Order).where(Order.public_id == public_id))
-    if order is None:
-        return
-    user = await current_user(session, callback.from_user.id)
-    if order.user_id != user.id:
-        return
+    async with session.begin():
+        order = await session.scalar(
+            select(Order)
+            .join(User, User.id == Order.user_id)
+            .where(
+                Order.public_id == public_id,
+                User.telegram_user_id == callback.from_user.id,
+            )
+        )
+        if order is None:
+            return
+        order_id = order.id
+        order_public_id = order.public_id
+        order_amount = order.amount
+        order_currency = order.currency
     payload = json.dumps(
         {
-            "event_id": f"telegram-{order.id}",
-            "transaction_id": f"mock-{order.id}",
-            "order_public_id": order.public_id,
-            "amount": order.amount,
-            "currency": order.currency,
+            "event_id": f"telegram-{order_id}",
+            "transaction_id": f"mock-{order_id}",
+            "order_public_id": order_public_id,
+            "amount": order_amount,
+            "currency": order_currency,
             "status": "paid",
         },
         separators=(",", ":"),
@@ -594,7 +583,7 @@ async def mock_payment(
         settings=settings,
         localizer=localizer,
         language=language,
-        order_id=order.id,
+        order_id=order_id,
         telegram_user_id=callback.from_user.id,
     )
     if presentation is None:
@@ -629,8 +618,11 @@ async def approve_outline(
         progress_message_id=callback.message.message_id,
     )
     if job.status == "QUEUED":
-        await callback.message.edit_text(f"0% · ⏳ {localizer.text(language, 'create.queued')}")
-        await state.set_state(PresentationFlow.queued)
+        await callback.message.edit_text(
+            f"0% · ⏳ {localizer.text(language, 'create.queued')}",
+            reply_markup=generation_cancel_action(localizer, language, presentation_id),
+        )
+    await state.clear()
     await callback.answer()
 
 
@@ -811,6 +803,12 @@ async def quick_presentation(
             caption=localizer.text(language, "quick.pdf_caption"),
         )
         await progress.edit_text(localizer.text(language, "quick.completed"))
+    except QuickPresentationRequestError:
+        logger.info(
+            "quick presentation request rejected telegram_user_id=%s",
+            message.from_user.id,
+        )
+        await progress.edit_text(localizer.text(language, "quick.invalid_request"))
     except Exception:
         logger.exception(
             "quick presentation generation failed for telegram user %s",

@@ -5,6 +5,7 @@ import pytest
 from modules.presentations.engine import (
     NodePresentationRenderer,
     PresentationRenderError,
+    _secure_image_paths,
     build_engine_payload,
     validate_pptx,
 )
@@ -120,3 +121,70 @@ async def test_python_adapter_rejects_image_outside_render_workdir(tmp_path: Pat
 
     with pytest.raises(PresentationRenderError, match="outside render workdir"):
         await renderer.render(payload, workdir / "result.pptx")
+
+
+@pytest.mark.parametrize(
+    "signature",
+    [
+        b"icns" + b"\x00" * 32,
+        b"\x00\x00\x00\x0cJXL \r\n\x87\n" + b"\x00" * 16,
+        b"\x00\x00\x00\x08JXL \x00\x00\x00\x0cftypjxl ",
+        *[
+            b"\x00\x00\x00\x18ftyp" + brand + b"\x00" * 20
+            for brand in (
+                b"avif",
+                b"avis",
+                b"heic",
+                b"heis",
+                b"heix",
+                b"heim",
+                b"hevc",
+                b"hevx",
+                b"mif1",
+                b"msf1",
+            )
+        ],
+    ],
+)
+def test_image_guard_rejects_vulnerable_format_even_with_png_extension(
+    tmp_path: Path,
+    signature: bytes,
+) -> None:
+    disguised_image = tmp_path / "disguised.png"
+    disguised_image.write_bytes(signature)
+    payload = {"slides": [{"image_paths": [str(disguised_image)]}]}
+
+    with pytest.raises(PresentationRenderError, match="unsupported image format"):
+        _secure_image_paths(payload, render_root=tmp_path)
+
+
+def test_image_guard_does_not_block_unaffected_iso_bmff_brand(tmp_path: Path) -> None:
+    image = tmp_path / "benign.bin"
+    image.write_bytes(b"\x00\x00\x00\x18ftypisom" + b"\x00" * 20)
+
+    secured = _secure_image_paths(
+        {"slides": [{"image_paths": [str(image)]}]},
+        render_root=tmp_path,
+    )
+
+    assert secured["slides"][0]["image_paths"] == [str(image.resolve())]
+
+
+@pytest.mark.parametrize(
+    "payload_factory",
+    [
+        lambda path: {"slides": ({"image_paths": [str(path)]},)},
+        lambda path: {"slides": [{"image_paths": (str(path),)}]},
+    ],
+)
+def test_image_guard_rejects_tuple_containers_before_json_serialization(
+    tmp_path: Path,
+    payload_factory,  # type: ignore[no-untyped-def]
+) -> None:
+    workdir = tmp_path / "render"
+    workdir.mkdir()
+    image = workdir / "unsafe.png"
+    image.write_bytes(b"icns" + b"\x00" * 32)
+
+    with pytest.raises(PresentationRenderError, match="must be a list"):
+        _secure_image_paths(payload_factory(image), render_root=workdir)

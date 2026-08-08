@@ -1,7 +1,7 @@
 from apps.bot.handlers.common import main_menu_text
-from apps.bot.keyboards import main_menu_keyboard
+from apps.bot.keyboards import choices_keyboard, main_menu_keyboard, resolve_choice
 from apps.bot.localization import Localizer
-from apps.bot.options import directions_for
+from apps.bot.options import KNOWLEDGE_LEVELS, PLAN_CODES, directions_for
 
 
 def test_main_menu_contains_required_actions_and_admin_is_conditional() -> None:
@@ -68,3 +68,20 @@ def test_all_required_directions_are_available_in_each_language() -> None:
     assert len(directions_for("ru")) == 30
     assert len(directions_for("en")) == 30
     assert "Tibbiyot" in directions_for("uz")
+
+
+def test_choice_keyboard_localizes_labels_and_resolves_canonical_values() -> None:
+    localizer = Localizer.load_default()
+    keyboard = choices_keyboard(KNOWLEDGE_LEVELS, localizer, "ru")
+    labels = {button.text for row in keyboard.keyboard for button in row}
+
+    assert keyboard.one_time_keyboard is True
+    assert "Начальный" in labels
+    assert "beginner" not in labels
+    assert resolve_choice("Начальный", KNOWLEDGE_LEVELS, localizer, "ru") == "beginner"
+    assert resolve_choice("beginner", KNOWLEDGE_LEVELS, localizer, "ru") == "beginner"
+
+    plan_keyboard = choices_keyboard(PLAN_CODES, localizer, "en")
+    plan_labels = {button.text for row in plan_keyboard.keyboard for button in row}
+    assert "Premium+" in plan_labels
+    assert "premium_plus" not in plan_labels

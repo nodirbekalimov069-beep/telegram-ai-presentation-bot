@@ -324,12 +324,32 @@ class PresentationService:
             if presentation is None:
                 raise LookupError(f"presentation {presentation_id} not found")
             current = OrderStatus(order.status)
-            if current not in {OrderStatus.WAITING_OUTLINE_APPROVAL, OrderStatus.CANCELLED}:
+            if current not in {
+                OrderStatus.WAITING_OUTLINE_APPROVAL,
+                OrderStatus.QUEUED,
+                OrderStatus.CANCELLED,
+            }:
                 raise ValueError("outline is no longer cancellable")
+            job: GenerationJob | None = None
+            if current == OrderStatus.QUEUED:
+                job = await session.scalar(
+                    select(GenerationJob)
+                    .where(GenerationJob.presentation_id == presentation_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+                if job is None or job.status not in {"QUEUED", "CANCELLED"}:
+                    raise ValueError("outline is no longer cancellable")
             cancelled = current != OrderStatus.CANCELLED
             if cancelled:
                 order.status = self._machine.transition(current, OrderStatus.CANCELLED)
                 presentation.status = OrderStatus.CANCELLED
+                if job is not None:
+                    job.status = "CANCELLED"
+                    job.progress = 0
+                    job.current_step = "cancelled"
+                    job.lease_token = None
+                    job.lease_expires_at = None
             order_id = order.id
             await FreeDemoService().release_cancelled_in_transaction(
                 session,

@@ -66,6 +66,7 @@ _PROGRESS_TEXTS: dict[str, dict[str, str]] = {
         "converting_pdf": "📄 PDF tayyorlanmoqda...",
         "delivery_pending": "📤 Fayllar Telegram’ga yuborilmoqda...",
         "delivered": "✅ Tayyor!",
+        "retrying": "♻️ Vaqtinchalik xato yuz berdi. Avtomatik qayta urinilmoqda...",
         "failed": "⚠️ Prezentatsiyani tayyorlashda xatolik yuz berdi.",
     },
     "ru": {
@@ -74,6 +75,7 @@ _PROGRESS_TEXTS: dict[str, dict[str, str]] = {
         "converting_pdf": "📄 Подготавливается PDF...",
         "delivery_pending": "📤 Файлы отправляются в Telegram...",
         "delivered": "✅ Готово!",
+        "retrying": "♻️ Произошла временная ошибка. Выполняется повторная попытка...",
         "failed": "⚠️ Произошла ошибка при подготовке презентации.",
     },
     "en": {
@@ -82,6 +84,7 @@ _PROGRESS_TEXTS: dict[str, dict[str, str]] = {
         "converting_pdf": "📄 Preparing the PDF...",
         "delivery_pending": "📤 Sending files to Telegram...",
         "delivered": "✅ Ready!",
+        "retrying": "♻️ A temporary error occurred. Retrying automatically...",
         "failed": "⚠️ An error occurred while preparing the presentation.",
     },
 }

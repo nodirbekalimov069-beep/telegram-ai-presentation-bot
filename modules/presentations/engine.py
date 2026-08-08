@@ -19,6 +19,30 @@ class PresentationRenderError(RuntimeError):
     pass
 
 
+# PptxGenJS currently pulls an image-size release whose ICNS/JXL/HEIF decoders have
+# upstream-unfixed CPU denial-of-service advisories. Reject those formats before Node.
+_HEIF_BRANDS = {
+    b"avif",
+    b"avis",
+    b"heic",
+    b"heis",
+    b"heix",
+    b"heim",
+    b"hevc",
+    b"hevx",
+    b"mif1",
+    b"msf1",
+}
+
+
+def _is_vulnerable_image_format(path: Path) -> bool:
+    with path.open("rb") as handle:
+        header = handle.read(16)
+    if header.startswith((b"icns", b"\xff\x0a")) or header[4:8] == b"JXL ":
+        return True
+    return len(header) >= 12 and header[4:8] == b"ftyp" and header[8:12] in _HEIF_BRANDS
+
+
 @dataclass(frozen=True, slots=True)
 class PptxQAReport:
     slide_count: int
@@ -53,19 +77,20 @@ def _secure_image_paths(payload: dict[str, Any], *, render_root: Path) -> dict[s
     root = render_root.resolve()
     slides = safe_payload.get("slides")
     if not isinstance(slides, list):
-        return safe_payload
+        raise PresentationRenderError("slides must be a list")
     for slide in slides:
         if not isinstance(slide, dict):
+            raise PresentationRenderError("each slide must be an object")
+        if "image_paths" not in slide:
             continue
-        image_paths = slide.get("image_paths")
+        image_paths = slide["image_paths"]
         if not isinstance(image_paths, list):
-            continue
-        secured: list[Any] = []
-        for value in image_paths:
-            if not isinstance(value, str):
-                secured.append(value)
-                continue
-            candidate = Path(value).expanduser()
+            raise PresentationRenderError("image_paths must be a list")
+        checked: list[str] = []
+        for raw_path in image_paths:
+            if not isinstance(raw_path, str):
+                raise PresentationRenderError("each image path must be a string")
+            candidate = Path(raw_path).expanduser()
             if not candidate.is_absolute():
                 candidate = root / candidate
             resolved = candidate.resolve()
@@ -73,8 +98,10 @@ def _secure_image_paths(payload: dict[str, Any], *, render_root: Path) -> dict[s
                 raise PresentationRenderError("image path is outside render workdir")
             if not resolved.is_file():
                 raise PresentationRenderError("image path is not a regular file")
-            secured.append(str(resolved))
-        slide["image_paths"] = secured
+            if _is_vulnerable_image_format(resolved):
+                raise PresentationRenderError("unsupported image format")
+            checked.append(str(resolved))
+        slide["image_paths"] = checked
     return safe_payload
 
 

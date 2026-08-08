@@ -44,6 +44,7 @@ def test_openai_runtime_rejects_missing_ai_key() -> None:
         bot_enabled=True,
         telegram_bot_token=SecretStr("123456:abcdefghijklmnopqrstuvwxyzABCDE"),
         ai_provider="openai_compatible",
+        ai_api_key=SecretStr(""),
     )
     with pytest.raises(ValueError, match="AI_API_KEY"):
         validate_runtime_credentials(settings)

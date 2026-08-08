@@ -4,6 +4,8 @@ from pathlib import Path
 import pytest
 from apps.bot.quick_presentation import (
     PptxTextPdfConverter,
+    QuickPresentationRequestError,
+    _request_settings,
     parse_quick_request,
     select_plan_code,
 )
@@ -22,6 +24,70 @@ def test_parse_quick_uzbek_command_extracts_requested_slide_count_and_images() -
     assert request.colorful is True
     assert request.topic == "Round Up dasturini tuzish amallari"
     assert len(request.topic) <= 80
+
+
+@pytest.mark.parametrize(
+    ("text", "language", "expected"),
+    [
+        ("Сделай презентацию на 10 слайдов о машинном обучении", "ru", 10),
+        ("Please create a 12-slide presentation about AI", "en", 12),
+    ],
+)
+def test_parse_quick_request_understands_russian_and_english_slide_words(
+    text: str,
+    language: str,
+    expected: int,
+) -> None:
+    assert parse_quick_request(text, language=language).slide_count == expected
+
+
+def test_parse_quick_request_rejects_unpriced_nine_slide_gap() -> None:
+    with pytest.raises(ValueError, match="1–8 or 10–30"):
+        parse_quick_request("Menga 9 slayd tayyorla", language="uz")
+
+
+@pytest.mark.parametrize(
+    ("text", "language"),
+    [
+        ("Menga 130 slayd tayyorla", "uz"),
+        ("Сделай 130 слайдов о машинном обучении", "ru"),
+        ("Create 130 slides about AI", "en"),
+    ],
+)
+def test_parse_quick_request_never_truncates_oversized_slide_count(
+    text: str,
+    language: str,
+) -> None:
+    with pytest.raises(QuickPresentationRequestError, match="between 1 and 30"):
+        parse_quick_request(text, language=language)
+
+
+def test_parse_quick_request_understands_uzbek_slaydli_suffix() -> None:
+    request = parse_quick_request(
+        "Menga 12 slaydli sun’iy intellekt taqdimoti kerak",
+        language="uz",
+    )
+
+    assert request.slide_count == 12
+    for count in (9, 130):
+        with pytest.raises(QuickPresentationRequestError):
+            parse_quick_request(
+                f"Menga {count} slaydli taqdimot tayyorla",
+                language="uz",
+            )
+
+
+def test_quick_visual_preferences_map_only_to_supported_generation_settings() -> None:
+    request = parse_quick_request(
+        "Menga AI haqida rasmlar bilan 12 sahifali rangli slayd tayyorla",
+        language="uz",
+    )
+
+    settings = _request_settings(request)
+
+    assert settings["design_style"] == "creative"
+    assert "vizual" in str(settings["purpose"]).casefold()
+    assert {"color_style", "image_amount", "diagram", "file_format"}.isdisjoint(settings)
 
 
 @pytest.mark.parametrize(

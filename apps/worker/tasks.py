@@ -5,14 +5,24 @@ import logging
 
 import dramatiq
 from dramatiq.brokers.redis import RedisBroker
+from dramatiq.middleware import CurrentMessage
 from sqlalchemy import select
 
 from core.config import get_settings
 from core.database.session import create_engine, create_session_factory
 from modules.files.factory import build_storage
-from modules.presentations.delivery import DeliveryInProgress, TelegramArtifactDelivery
+from modules.presentations.delivery import (
+    DeliveryInProgress,
+    DeliveryLeaseLost,
+    TelegramArtifactDelivery,
+)
 from modules.presentations.engine import NodePresentationRenderer
-from modules.presentations.generation import GenerationLeaseActive, GenerationPipeline
+from modules.presentations.generation import (
+    GenerationLeaseActive,
+    GenerationLeaseLost,
+    GenerationPipeline,
+    mark_terminal_generation_failure,
+)
 from modules.presentations.pdf import LibreOfficeConverter
 from modules.orders.domain import OrderStatus
 from modules.orders.models import Order
@@ -24,35 +34,79 @@ logger = logging.getLogger(__name__)
 
 _settings = get_settings()
 _broker = RedisBroker(url=_settings.redis_url)  # type: ignore[no-untyped-call]
+_broker.add_middleware(CurrentMessage())  # type: ignore[no-untyped-call]
 dramatiq.set_broker(_broker)
+
+_RUNTIME_FAILURES_OPTION = "generation_runtime_failures"
+
+
+class GenerationAttemptError(RuntimeError):
+    def __init__(self, *, failures: int) -> None:
+        super().__init__(f"generation attempt failed ({failures})")
+        self.failures = failures
+
+
+def _coordination_retry(
+    error: DeliveryInProgress | DeliveryLeaseLost | GenerationLeaseActive | GenerationLeaseLost,
+) -> dramatiq.Retry:
+    retry_after_ms = max(1_000, int(getattr(error, "retry_after_ms", 1_000)))
+    return dramatiq.Retry(  # type: ignore[no-untyped-call]
+        "presentation processing coordination changed",
+        delay=retry_after_ms,
+    )
 
 
 def _generation_retry_when(retries: int, exception: Exception) -> bool:
+    del retries
     if isinstance(exception, dramatiq.Retry):
         return True
-    return retries < _settings.generation_max_retries
+    if isinstance(exception, GenerationAttemptError):
+        return exception.failures <= _settings.generation_max_retries
+    return False
 
 
-async def _generate(presentation_id: int) -> None:
+def _failure_progress_step(*, retries: int, max_retries: int) -> str:
+    return "failed" if retries >= max_retries else "retrying"
+
+
+def _current_failure_progress_step() -> str:
+    message = CurrentMessage.get_current_message()
+    retries = 0 if message is None else int(message.options.get(_RUNTIME_FAILURES_OPTION, 0))
+    return _failure_progress_step(
+        retries=max(0, retries),
+        max_retries=_settings.generation_max_retries,
+    )
+
+
+def _record_runtime_failure() -> int:
+    message = CurrentMessage.get_current_message()
+    current = 0 if message is None else int(message.options.get(_RUNTIME_FAILURES_OPTION, 0))
+    failures = max(0, current) + 1
+    if message is not None:
+        message.options[_RUNTIME_FAILURES_OPTION] = failures
+    return failures
+
+
+async def _generate(presentation_id: int, *, terminal_failure: bool = False) -> None:
     settings = get_settings()
     engine = create_engine(settings)
     factory = create_session_factory(engine)
-    renderer_path = settings.presentation_renderer.expanduser().resolve()
-    storage = build_storage(settings)
-    pipeline = GenerationPipeline(
-        renderer=NodePresentationRenderer(
-            renderer_path.parent,
-            node_binary=settings.node_binary,
-        ),
-        pdf_converter=LibreOfficeConverter(binary=settings.libreoffice_binary),
-        storage=storage,
-        work_root=settings.generation_work_root,
-    )
     destination = None
     progress_reporter = None
     try:
         from aiogram import Bot
 
+        renderer_path = settings.presentation_renderer.expanduser().resolve()
+        storage = build_storage(settings)
+        pipeline = GenerationPipeline(
+            renderer=NodePresentationRenderer(
+                renderer_path.parent,
+                node_binary=settings.node_binary,
+            ),
+            pdf_converter=LibreOfficeConverter(binary=settings.libreoffice_binary),
+            storage=storage,
+            work_root=settings.generation_work_root,
+        )
         token = settings.telegram_bot_token.get_secret_value()
         if not token:
             raise RuntimeError("TELEGRAM_BOT_TOKEN is required for artifact delivery")
@@ -75,6 +129,7 @@ async def _generate(presentation_id: int) -> None:
                 factory,
                 presentation_id=presentation_id,
                 progress_callback=progress_reporter,
+                terminal_failure=terminal_failure,
             )
             if not result.completed:
                 return
@@ -90,17 +145,20 @@ async def _generate(presentation_id: int) -> None:
             )
             if progress_reporter is not None:
                 await progress_reporter(100, "delivered")
-    except (DeliveryInProgress, GenerationLeaseActive) as exc:
+    except (
+        DeliveryInProgress,
+        DeliveryLeaseLost,
+        GenerationLeaseActive,
+        GenerationLeaseLost,
+    ) as exc:
+        retry = _coordination_retry(exc)
         logger.info(
-            "presentation lease is active presentation_id=%s retry_after_ms=%s",
+            "presentation lease is unavailable presentation_id=%s retry_after_ms=%s",
             presentation_id,
-            exc.retry_after_ms,
+            retry.delay,
         )
-        raise dramatiq.Retry(  # type: ignore[no-untyped-call]
-            "presentation processing lease is still active",
-            delay=exc.retry_after_ms,
-        ) from exc
-    except Exception:
+        raise retry from exc
+    except Exception as error:
         logger.exception(
             "presentation generation failed job_id=%s presentation_id=%s "
             "telegram_user_id=%s correlation_id=generation-%s",
@@ -109,11 +167,37 @@ async def _generate(presentation_id: int) -> None:
             destination.chat_id if destination is not None else None,
             presentation_id,
         )
+        if terminal_failure:
+            try:
+                await mark_terminal_generation_failure(
+                    factory,
+                    presentation_id=presentation_id,
+                    error=error,
+                )
+            except Exception:
+                logger.exception(
+                    "terminal generation failure could not be persisted presentation_id=%s",
+                    presentation_id,
+                )
         if progress_reporter is not None:
-            await progress_reporter(0, "failed")
+            await progress_reporter(0, "failed" if terminal_failure else "retrying")
         raise
     finally:
         await engine.dispose()
+
+
+def _run_generation_actor(presentation_id: int) -> None:
+    try:
+        asyncio.run(
+            _generate(
+                presentation_id,
+                terminal_failure=_current_failure_progress_step() == "failed",
+            )
+        )
+    except dramatiq.Retry:
+        raise
+    except Exception as exc:
+        raise GenerationAttemptError(failures=_record_runtime_failure()) from exc
 
 
 async def _process_paid_order(order_id: int) -> None:
@@ -156,13 +240,13 @@ async def _process_paid_order(order_id: int) -> None:
             if user is None:
                 raise LookupError("paid order user not found")
             telegram_user_id = user.telegram_user_id
-            language = user.selected_language
+            language = presentation.language
 
         token = settings.telegram_bot_token.get_secret_value()
         if not token:
             return
         slides = presentation.outline.get("slides", [])
-        lines = [localizer.text(language, "create.outline_ready")]
+        lines = [localizer.text(language, "create.outline")]
         lines.extend(
             f"{item.get('number', index)}. {item.get('title', '')}"
             for index, item in enumerate(slides, start=1)
@@ -189,7 +273,7 @@ async def _process_paid_order(order_id: int) -> None:
     time_limit=600_000,
 )
 def generate_presentation(presentation_id: int) -> None:
-    asyncio.run(_generate(presentation_id))
+    _run_generation_actor(presentation_id)
 
 
 @dramatiq.actor(
@@ -201,7 +285,7 @@ def generate_presentation(presentation_id: int) -> None:
     time_limit=600_000,
 )
 def generate_priority_presentation(presentation_id: int) -> None:
-    asyncio.run(_generate(presentation_id))
+    _run_generation_actor(presentation_id)
 
 
 @dramatiq.actor(
