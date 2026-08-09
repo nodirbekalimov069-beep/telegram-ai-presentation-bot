@@ -186,9 +186,9 @@ class TelegramArtifactDelivery:
                 )
                 if sent_pptx_id is None:
                     message = await bot.send_document(
-                        telegram_user_id,
-                        FSInputFile(pptx_path, filename=pptx_filename),
-                        f"✅ {title} — PPTX",
+                        chat_id=telegram_user_id,
+                        document=FSInputFile(pptx_path, filename=pptx_filename),
+                        caption=f"✅ {title} — PPTX",
                     )
                     sent_pptx_id = int(message.message_id)
                     await self._record_message(
@@ -200,9 +200,9 @@ class TelegramArtifactDelivery:
                     )
                 if sent_pdf_id is None:
                     message = await bot.send_document(
-                        telegram_user_id,
-                        FSInputFile(pdf_path, filename=pdf_filename),
-                        f"✅ {title} — PDF",
+                        chat_id=telegram_user_id,
+                        document=FSInputFile(pdf_path, filename=pdf_filename),
+                        caption=f"✅ {title} — PDF",
                     )
                     sent_pdf_id = int(message.message_id)
                     await self._record_message(

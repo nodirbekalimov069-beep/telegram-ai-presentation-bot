@@ -87,7 +87,7 @@ async def cancel_flow(
     if current_state in {
         PresentationFlow.outline_review.state,
         PresentationFlow.outline_edit.state,
-    }:
+    } or (current_state is None and "presentation_id" in data):
         try:
             presentation_id = int(data["presentation_id"])
             await PresentationService().cancel_outline(
@@ -155,8 +155,35 @@ async def back_flow(
     if message.from_user is None:
         return
     data = await state.get_data()
-    language = str(data.get("language") or await _language(session, message.from_user.id))
     current = await state.get_state()
+    if current == PresentationFlow.waiting_payment.state:
+        try:
+            await OrderService().cancel_waiting_payment(
+                session,
+                order_id=int(data["order_id"]),
+                telegram_user_id=message.from_user.id,
+            )
+        except (KeyError, TypeError, ValueError, LookupError):
+            logger.exception(
+                "payment cancellation failed while navigating back telegram_user_id=%s",
+                message.from_user.id,
+            )
+            language = str(data.get("language") or await _language(session, message.from_user.id))
+            await message.answer(localizer.text(language, "error.cancel_busy"))
+            return
+        language = str(data.get("language") or await _language(session, message.from_user.id))
+        await state.set_data({key: value for key, value in data.items() if key != "order_id"})
+        await state.set_state(PresentationFlow.plan)
+        await message.answer(
+            localizer.text(language, "create.plan"),
+            reply_markup=choices_keyboard(PLAN_CODES, localizer, language),
+        )
+        return
+    language = str(data.get("language") or await _language(session, message.from_user.id))
+    if current is None and "presentation_id" in data:
+        user = await current_user(session, message.from_user.id)
+        await show_main_menu(message, user=user, localizer=localizer, settings=settings)
+        return
     if current == PresentationFlow.direction.state:
         await state.set_state(PresentationFlow.language)
         await message.answer(
@@ -540,6 +567,9 @@ async def mock_payment(
     if settings.app_env == "production":
         await callback.answer(localizer.text(language, "payment.disabled"), show_alert=True)
         return
+    # Telegram callback queries expire quickly. Acknowledge before payment and
+    # AI outline work, which may take tens of seconds on a real provider.
+    await callback.answer()
     public_id = callback.data.split(":", 1)[1]
     async with session.begin():
         order = await session.scalar(
@@ -587,13 +617,11 @@ async def mock_payment(
         telegram_user_id=callback.from_user.id,
     )
     if presentation is None:
-        await callback.answer()
         return
     await state.update_data(presentation_id=presentation.id)
     await state.set_state(PresentationFlow.outline_review)
     await callback.message.answer(localizer.text(language, "payment.confirmed"))
     await _send_outline(callback.message, presentation, localizer, language, edit=True)
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("outline:approve"))
@@ -622,7 +650,8 @@ async def approve_outline(
             f"0% · ⏳ {localizer.text(language, 'create.queued')}",
             reply_markup=generation_cancel_action(localizer, language, presentation_id),
         )
-    await state.clear()
+    await state.set_data({"presentation_id": presentation_id, "language": language})
+    await state.set_state(None)
     await callback.answer()
 
 

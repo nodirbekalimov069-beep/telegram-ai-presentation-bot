@@ -8,7 +8,7 @@ from pydantic import SecretStr
 
 
 def test_bot_is_disabled_by_default() -> None:
-    assert Settings(app_env="test").bot_enabled is False
+    assert Settings.model_fields["bot_enabled"].default is False
 
 
 def test_disabled_runtime_does_not_require_external_credentials() -> None:

@@ -27,7 +27,13 @@ class RecordingBot:
         self.next_message_id = first_message_id
         self.filenames: list[str] = []
 
-    async def send_document(self, chat_id: int, document: Any, caption: str) -> object:
+    async def send_document(
+        self,
+        *,
+        chat_id: int,
+        document: Any,
+        caption: str,
+    ) -> object:
         del chat_id, caption
         filename = str(document.filename)
         self.filenames.append(filename)
