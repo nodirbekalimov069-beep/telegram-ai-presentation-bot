@@ -133,8 +133,8 @@ function addFooter(slide, index, total, theme, dark = false) {
   });
 }
 
-function addHeader(slide, title, theme, index) {
-  slide.addText(`ONKOLOGIYA  •  ${String(index + 1).padStart(2, "0")}`, {
+function addHeader(slide, title, theme, index, sectionLabel) {
+  slide.addText(`${sectionLabel}  •  ${String(index + 1).padStart(2, "0")}`, {
     x: MARGIN,
     y: 0.38,
     w: 3.4,
@@ -161,46 +161,49 @@ function addHeader(slide, title, theme, index) {
   });
 }
 
-function addCellCluster(slide, theme, x, y, scale = 1) {
+function addVisualCluster(slide, theme, x, y, scale = 1, medical = false) {
   const cells = [
-    [1.55, 1.25, 1.45, theme.palette.secondary, 20],
-    [0.25, 1.05, 1.05, theme.palette.primary, 12],
-    [2.72, 0.35, 0.88, theme.palette.accent, 8],
-    [3.05, 1.85, 1.15, theme.palette.secondary, 30],
-    [1.15, 2.65, 0.72, theme.palette.accent, 12],
-    [2.15, 2.85, 0.52, theme.palette.primary, 5],
+    [1.55, 1.25, 1.45, theme.palette.secondary],
+    [0.25, 1.05, 1.05, theme.palette.primary],
+    [2.72, 0.35, 0.88, theme.palette.accent],
+    [3.05, 1.85, 1.15, theme.palette.secondary],
+    [1.15, 2.65, 0.72, theme.palette.accent],
+    [2.15, 2.85, 0.52, theme.palette.primary],
   ];
-  for (const [dx, dy, size, color, transparency] of cells) {
+  for (const [dx, dy, size, color] of cells) {
+    const filled = medical || size < 0.8;
     slide.addShape("ellipse", {
       x: x + dx * scale,
       y: y + dy * scale,
       w: size * scale,
       h: size * scale,
-      fill: { color, transparency },
-      line: { color: "FFFFFF", transparency: 35, width: 1.2 },
+      fill: { color: filled ? color : theme.palette.dark },
+      line: { color, width: 1.5 },
     });
-    slide.addShape("ellipse", {
-      x: x + (dx + size * 0.34) * scale,
-      y: y + (dy + size * 0.34) * scale,
-      w: size * 0.32 * scale,
-      h: size * 0.32 * scale,
-      fill: { color: theme.palette.dark, transparency: 18 },
-      line: { color: theme.palette.dark, transparency: 100 },
-    });
+    if (medical) {
+      slide.addShape("ellipse", {
+        x: x + (dx + size * 0.34) * scale,
+        y: y + (dy + size * 0.34) * scale,
+        w: size * 0.32 * scale,
+        h: size * 0.32 * scale,
+        fill: { color: theme.palette.dark },
+        line: { color: theme.palette.dark },
+      });
+    }
   }
 }
 
-function addCover(slide, content, deck, theme, index) {
+function addCover(slide, content, deck, theme, index, medical) {
   slide.background = { color: theme.palette.dark };
   slide.addShape("ellipse", {
     x: -1.25,
     y: -2.05,
     w: 6.2,
     h: 6.2,
-    fill: { color: theme.palette.primary, transparency: 58 },
-    line: { color: theme.palette.primary, transparency: 100 },
+    fill: { color: theme.palette.primary },
+    line: { color: theme.palette.primary },
   });
-  slide.addText("TIBBIY TAQDIMOT", {
+  slide.addText(medical ? "TIBBIY TAQDIMOT" : "AKADEMIK TAQDIMOT", {
     x: 0.82,
     y: 1.1,
     w: 4.2,
@@ -260,7 +263,7 @@ function addCover(slide, content, deck, theme, index) {
     color: "FFFFFF",
     margin: 0,
   });
-  addCellCluster(slide, theme, 8.25, 1.05, 1.05);
+  addVisualCluster(slide, theme, 8.25, 1.05, 1.05, medical);
   addFooter(slide, index, deck.slides.length, theme, true);
 }
 
@@ -281,7 +284,7 @@ function addCard(slide, { x, y, w, h, number, text }, theme) {
     w: 0.5,
     h: 0.5,
     fill: { color: number % 3 === 0 ? theme.palette.accent : theme.palette.primary },
-    line: { color: "FFFFFF", transparency: 100 },
+    line: { color: number % 3 === 0 ? theme.palette.accent : theme.palette.primary },
   });
   slide.addText(String(number).padStart(2, "0"), {
     x: x + 0.25,
@@ -333,7 +336,7 @@ function addCardGrid(slide, bullets, theme) {
   });
 }
 
-function addSplitLayout(slide, bullets, theme) {
+function addSplitLayout(slide, bullets, theme, medical) {
   const panelX = 7.52;
   slide.addShape("roundRect", {
     x: panelX,
@@ -345,7 +348,7 @@ function addSplitLayout(slide, bullets, theme) {
     line: { color: theme.palette.dark },
     shadow: softShadow(),
   });
-  slide.addText("HUJAYRA\nMIQYOSIDA", {
+  slide.addText(medical ? "HUJAYRA\nMIQYOSIDA" : "ASOSIY\nG'OYA", {
     x: panelX + 0.5,
     y: 5.35,
     w: 2.1,
@@ -357,7 +360,7 @@ function addSplitLayout(slide, bullets, theme) {
     color: "BFE0DD",
     margin: 0,
   });
-  addCellCluster(slide, theme, panelX + 0.38, 1.75, 0.86);
+  addVisualCluster(slide, theme, panelX + 0.38, 1.75, 0.86, medical);
   bullets.slice(0, 4).forEach((text, index) => {
     slide.addShape("roundRect", {
       x: MARGIN,
@@ -393,7 +396,7 @@ function addProcessFromBullets(slide, bullets, theme) {
     y: 3.1,
     w: totalW - 0.8,
     h: 0,
-    line: { color: theme.palette.secondary, transparency: 20, width: 4 },
+    line: { color: theme.palette.secondary, width: 4 },
   });
   items.forEach((text, index) => {
     const center = startX + index * itemW + itemW / 2;
@@ -706,7 +709,7 @@ async function addImages(slide, imagePaths, theme) {
   });
 }
 
-function addConclusion(slide, content, deck, theme, index) {
+function addConclusion(slide, content, deck, theme, index, medical) {
   slide.background = { color: theme.palette.dark };
   slide.addText("YAKUNIY XULOSA", {
     x: MARGIN,
@@ -739,8 +742,8 @@ function addConclusion(slide, content, deck, theme, index) {
       w: 7.25,
       h: 0.68,
       rectRadius: 0.05,
-      fill: { color: "FFFFFF", transparency: 88 },
-      line: { color: "FFFFFF", transparency: 78 },
+      fill: { color: theme.palette.primary },
+      line: { color: theme.palette.secondary },
     });
     slide.addText(`0${bulletIndex + 1}  ${text}`, {
       x: MARGIN + 0.25,
@@ -754,7 +757,7 @@ function addConclusion(slide, content, deck, theme, index) {
       fit: "shrink",
     });
   });
-  addCellCluster(slide, theme, 8.55, 1.3, 0.92);
+  addVisualCluster(slide, theme, 8.55, 1.3, 0.92, medical);
   addFooter(slide, index, deck.slides.length, theme, true);
 }
 
@@ -770,6 +773,8 @@ function notesFor(slide) {
 export async function renderPresentation(input, outputPath) {
   const deck = validatePresentation(input);
   assertFits(deck);
+  const medical = isMedicalDeck(deck);
+  const sectionLabel = medical ? "ONKOLOGIYA" : "AKADEMIK";
   const theme = visualTheme(deck);
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE";
@@ -795,12 +800,12 @@ export async function renderPresentation(input, outputPath) {
       index === deck.slides.length - 1 && deck.slides.length > 2;
 
     if (canBeCover) {
-      addCover(slide, content, deck, theme, index);
+      addCover(slide, content, deck, theme, index, medical);
     } else if (isConclusion) {
-      addConclusion(slide, content, deck, theme, index);
+      addConclusion(slide, content, deck, theme, index, medical);
     } else {
       slide.background = { color: theme.palette.background };
-      addHeader(slide, content.title, theme, index);
+      addHeader(slide, content.title, theme, index, sectionLabel);
       if (content.image_paths?.length) {
         addSideInsights(slide, content.bullets, theme);
         await addImages(slide, content.image_paths, theme);
@@ -831,7 +836,7 @@ export async function renderPresentation(input, outputPath) {
       } else if (index % 3 === 1) {
         addCardGrid(slide, content.bullets, theme);
       } else if (index % 3 === 2) {
-        addSplitLayout(slide, content.bullets, theme);
+        addSplitLayout(slide, content.bullets, theme, medical);
       } else {
         addProcessFromBullets(slide, content.bullets, theme);
       }
