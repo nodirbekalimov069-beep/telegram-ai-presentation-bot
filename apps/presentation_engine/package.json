@@ -8,8 +8,14 @@
     "render": "node render.mjs"
   },
   "dependencies": {
+    "image-size": "file:vendor/image-size-safe",
     "jszip": "^3.10.1",
-    "pptxgenjs": "^4.0.1",
+    "pptxgenjs": "4.0.1",
     "zod": "^4.4.3"
+  },
+  "overrides": {
+    "pptxgenjs": {
+      "image-size": "$image-size"
+    }
   }
 }

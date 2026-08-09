@@ -19,8 +19,8 @@ class PresentationRenderError(RuntimeError):
     pass
 
 
-# PptxGenJS currently pulls an image-size release whose ICNS/JXL/HEIF decoders have
-# upstream-unfixed CPU denial-of-service advisories. Reject those formats before Node.
+# The local image-size shim removes the vulnerable ICNS/JXL/HEIF decoders from the
+# install tree. Keep this magic-byte rejection as defense in depth at the Python boundary.
 _HEIF_BRANDS = {
     b"avif",
     b"avis",

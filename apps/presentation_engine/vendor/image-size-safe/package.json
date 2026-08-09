@@ -1,0 +1,12 @@
+{
+  "name": "image-size",
+  "version": "2.0.3-presentation.0",
+  "description": "Fail-closed compatibility shim for PptxGenJS's currently unused image-size dependency",
+  "private": true,
+  "main": "index.cjs",
+  "exports": {
+    ".": "./index.cjs",
+    "./package.json": "./package.json"
+  },
+  "license": "MIT"
+}

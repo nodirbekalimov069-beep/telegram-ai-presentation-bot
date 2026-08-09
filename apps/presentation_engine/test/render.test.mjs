@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,6 +8,8 @@ import test from "node:test";
 import JSZip from "jszip";
 
 import { renderPresentation } from "../src/render.mjs";
+
+const require = createRequire(import.meta.url);
 
 const validDeck = {
   title: "Quarterly product review",
@@ -53,6 +56,19 @@ const validDeck = {
     }
   ]
 };
+
+test("installed image inspection dependency excludes vulnerable parsers", () => {
+  const imageSize = require("image-size");
+  const enabledTypes = new Set(imageSize.types ?? []);
+
+  for (const vulnerableType of ["icns", "jxl", "heif"]) {
+    assert.equal(enabledTypes.has(vulnerableType), false, `${vulnerableType} parser must be absent`);
+  }
+  assert.throws(
+    () => imageSize(Buffer.from("untrusted image bytes")),
+    /image dimension inspection is disabled/i,
+  );
+});
 
 test("renders a real PPTX with one slide XML part per input slide", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "presentation-engine-"));
