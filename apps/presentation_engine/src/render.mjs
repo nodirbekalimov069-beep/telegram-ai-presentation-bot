@@ -103,15 +103,29 @@ function isScienceDeck(deck) {
   return /uglevod|glyuk|glukoz|biokim|biolog|kimyo|ferment|metabol|hujayra|polisaxarid|monosaxarid|carbohyd|enzyme|protein|lipid/i.test(corpus);
 }
 
+function isLightColor(value) {
+  const hex = String(value || "").replace(/^#/, "");
+  if (!/^[0-9a-f]{6}$/i.test(hex)) return false;
+  const [red, green, blue] = [0, 2, 4].map((offset) =>
+    Number.parseInt(hex.slice(offset, offset + 2), 16),
+  );
+  return (red * 299 + green * 587 + blue * 114) / 1000 >= 160;
+}
+
 function visualTheme(deck) {
   if (!isMedicalDeck(deck)) {
+    const background = deck.theme.palette.background;
+    const foreground = deck.theme.palette.foreground;
+    const onSurface = isLightColor(foreground) ? "102E33" : foreground;
     return {
       ...deck.theme,
       palette: {
         ...deck.theme.palette,
-        dark: deck.theme.palette.foreground,
+        dark: isLightColor(background) ? onSurface : background,
         surface: "FFFFFF",
         muted: "64748B",
+        onSurface,
+        onSurfaceMuted: "5F777A",
         pale: "E8EEF3",
       },
     };
@@ -127,6 +141,8 @@ function visualTheme(deck) {
       dark: "082F35",
       surface: "FFFFFF",
       muted: "5F777A",
+      onSurface: "102E33",
+      onSurfaceMuted: "5F777A",
       pale: "DCEDEB",
     },
   };
@@ -543,7 +559,7 @@ function addCard(slide, { x, y, w, h, number, block }, theme) {
     fontFace: theme.typography.heading,
     fontSize: h > 3 ? 19 : 16,
     bold: true,
-    color: theme.palette.foreground,
+    color: theme.palette.onSurface,
     margin: 0,
     fit: "shrink",
   });
@@ -555,7 +571,7 @@ function addCard(slide, { x, y, w, h, number, block }, theme) {
       h: h - (h > 3 ? 1.72 : 1.37),
       fontFace: theme.typography.body,
       fontSize: h > 3 ? 15.5 : 13.5,
-      color: theme.palette.muted,
+      color: theme.palette.onSurfaceMuted,
       margin: 0,
       valign: "top",
       fit: "shrink",
@@ -748,7 +764,10 @@ function addTable(slide, table, theme, options = {}) {
         text: String(text),
         options: {
           fill: rowIndex % 2 === 0 ? "FFFFFF" : theme.palette.background,
-          color: theme.palette.foreground,
+          color:
+            rowIndex % 2 === 0
+              ? theme.palette.onSurface
+              : theme.palette.foreground,
           valign: "mid",
         },
       })),
@@ -792,24 +811,24 @@ function addChart(slide, chart, theme, options = {}) {
     w: w - 0.68,
     h: h - 0.72,
     showLegend: chart.series.length > 1,
-    legendColor: theme.palette.foreground,
+    legendColor: theme.palette.onSurface,
     legendFontFace: theme.typography.body,
     legendFontSize: 11,
     showTitle: false,
     showValue: true,
     dataLabelPosition: chart.type === "bar" ? "outEnd" : "bestFit",
-    dataLabelColor: theme.palette.foreground,
+    dataLabelColor: theme.palette.onSurface,
     dataLabelFormatCode: "0",
     chartColors: [
       theme.palette.primary,
       theme.palette.secondary,
       theme.palette.accent,
     ],
-    catAxisLabelColor: theme.palette.muted,
+    catAxisLabelColor: theme.palette.onSurfaceMuted,
     catAxisLabelFontFace: theme.typography.body,
     catAxisLabelFontSize: 11,
     catAxisLineColor: theme.palette.pale,
-    valAxisLabelColor: theme.palette.muted,
+    valAxisLabelColor: theme.palette.onSurfaceMuted,
     valAxisLabelFontFace: theme.typography.body,
     valAxisLabelFontSize: 10,
     valAxisLineColor: theme.palette.pale,
@@ -841,7 +860,7 @@ function addSideInsights(slide, content, theme) {
       fontFace: theme.typography.heading,
       fontSize: 14.5,
       bold: true,
-      color: index === 0 ? "FFFFFF" : theme.palette.foreground,
+      color: index === 0 ? "FFFFFF" : theme.palette.onSurface,
       margin: 0,
       fit: "shrink",
     });
@@ -852,7 +871,7 @@ function addSideInsights(slide, content, theme) {
       h: 0.5,
       fontFace: theme.typography.body,
       fontSize: 10.8,
-      color: index === 0 ? "E9F1F0" : theme.palette.muted,
+      color: index === 0 ? "E9F1F0" : theme.palette.onSurfaceMuted,
       margin: 0,
       fit: "shrink",
     });
@@ -1015,7 +1034,7 @@ function addSwot(slide, layout, theme) {
         h: 1.2,
         fontFace: theme.typography.body,
         fontSize: 15,
-        color: theme.palette.foreground,
+        color: theme.palette.onSurface,
         valign: "top",
         margin: 0.03,
       },

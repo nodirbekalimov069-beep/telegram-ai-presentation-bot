@@ -9,6 +9,7 @@ from modules.presentations.engine import (
     build_engine_payload,
     validate_pptx,
 )
+from scripts.local_artifact_e2e import _outline as local_artifact_e2e_outline
 
 
 def sample_outline() -> dict:
@@ -35,6 +36,16 @@ def sample_outline() -> dict:
             },
         ],
     }
+
+
+def test_local_artifact_e2e_fixture_satisfies_chart_source_contract() -> None:
+    outline = local_artifact_e2e_outline()
+
+    chart_slides = [slide for slide in outline.slides if slide.chart is not None]
+    assert len(chart_slides) == 3
+    assert all(
+        any(source.startswith("https://") for source in slide.sources) for slide in chart_slides
+    )
 
 
 def test_payload_matches_node_contract_without_inventing_chart_data() -> None:

@@ -24,6 +24,9 @@ from modules.presentations.pdf import LibreOfficeConverter, validate_pdf
 from modules.users.models import User
 
 
+_SYNTHETIC_FIXTURE_SOURCE = ["https://example.com/?dataset=synthetic-e2e-fixture"]
+
+
 def _outline() -> Outline:
     slides: list[dict[str, object]] = [
         {
@@ -42,7 +45,7 @@ def _outline() -> Outline:
             "key_points": ["Qiymatlar faqat test fixture", "Fakt sifatida talqin qilinmaydi"],
             "visual_type": "chart",
             "layout": "chart_and_table",
-            "sources": [],
+            "sources": _SYNTHETIC_FIXTURE_SOURCE,
             "chart": {
                 "type": "bar",
                 "categories": ["Render", "Convert", "QA"],
@@ -129,7 +132,7 @@ def _outline() -> Outline:
             "key_points": ["Synthetic E2E fixture"],
             "visual_type": "chart",
             "layout": "chart",
-            "sources": [],
+            "sources": _SYNTHETIC_FIXTURE_SOURCE,
             "chart": {
                 "type": "line",
                 "categories": ["1", "2", "3", "4"],
@@ -143,7 +146,7 @@ def _outline() -> Outline:
             "key_points": ["Synthetic E2E fixture"],
             "visual_type": "chart",
             "layout": "chart",
-            "sources": [],
+            "sources": _SYNTHETIC_FIXTURE_SOURCE,
             "chart": {
                 "type": "pie",
                 "categories": ["PPTX", "PDF"],

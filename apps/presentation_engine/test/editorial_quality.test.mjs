@@ -205,3 +205,75 @@ test("biochemistry decks use a molecular science motif instead of archival paper
   assert.match(content, /BIOKIMYO/);
   assert.doesNotMatch(content, /MANBA.*TALQIN.*NARRATIV/s);
 });
+
+test("dark themes keep white surfaces and conclusion text readable", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "presentation-dark-contrast-"));
+  const output = path.join(dir, "deck.pptx");
+  const darkTheme = {
+    palette: {
+      background: "0F1324",
+      foreground: "F8FAFC",
+      primary: "7C3AED",
+      secondary: "A78BFA",
+      accent: "22D3EE"
+    },
+    typography: { heading: "Aptos Display", body: "Aptos" }
+  };
+  const deck = {
+    title: "Runtime kontrast",
+    language: "uz",
+    theme: darkTheme,
+    plan_code: "PREMIUM_PLUS",
+    slides: [
+      {
+        role: "content",
+        title: "Chart va jadval",
+        bullets: [],
+        content_blocks: [
+          { heading: "Dark insight", body: "Qorong‘i kartadagi matn." },
+          { heading: "Surface insight", body: "Oq kartadagi matn o‘qilishi kerak." }
+        ],
+        chart: { type: "bar", categories: ["A"], series: [{ name: "Qiymat", values: [2] }] },
+        table: { headers: ["Mezon", "Qiymat"], rows: [["Readable cell", "2"]] },
+        sources: [{ label: "example.com", url: "https://example.com/" }]
+      },
+      {
+        role: "content",
+        title: "SWOT",
+        bullets: [],
+        layout: {
+          type: "swot",
+          strengths: ["Readable bullet"],
+          weaknesses: ["B"],
+          opportunities: ["C"],
+          threats: ["D"]
+        },
+        sources: []
+      },
+      {
+        role: "conclusion",
+        title: "Xulosa",
+        bullets: ["Yakun"],
+        content_blocks: [{ heading: "Natija", body: "Kontrast saqlanadi." }],
+        sources: []
+      }
+    ]
+  };
+
+  await renderPresentation(deck, output);
+  const zip = await JSZip.loadAsync(await readFile(output));
+  const chartSlide = await zip.file("ppt/slides/slide1.xml").async("string");
+  const swotSlide = await zip.file("ppt/slides/slide2.xml").async("string");
+  const conclusion = await zip.file("ppt/slides/slide3.xml").async("string");
+  const shapeFor = (xml, text) => {
+    const textIndex = xml.indexOf(`<a:t>${text}</a:t>`);
+    assert.ok(textIndex >= 0, `${text} must be rendered`);
+    return xml.slice(xml.lastIndexOf("<p:sp>", textIndex), xml.indexOf("</p:sp>", textIndex));
+  };
+
+  assert.match(shapeFor(chartSlide, "Surface insight"), /<a:srgbClr val="102E33"\/>/);
+  assert.match(shapeFor(chartSlide, "Readable cell"), /<a:srgbClr val="102E33"\/>/);
+  assert.match(shapeFor(swotSlide, "Readable bullet"), /<a:srgbClr val="102E33"\/>/);
+  assert.match(conclusion, /<a:srgbClr val="0F1324"\/>/);
+  assert.match(shapeFor(conclusion, "Xulosa"), /<a:srgbClr val="FFFFFF"\/>/);
+});
