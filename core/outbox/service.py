@@ -64,10 +64,20 @@ class OutboxService:
             )
             if event is None:
                 return False
+            durable_cleanup = event.event_type in {
+                "service.essay.cleanup_requested",
+                "service.independent.cleanup_requested",
+            }
             publisher = publishers.get(event.event_type)
             if publisher is None:
-                event.status = "DEAD"
                 event.last_error = f"no publisher registered for {event.event_type}"
+                if durable_cleanup:
+                    event.attempts += 1
+                    event.status = "PENDING"
+                    delay = min(300, 2 ** min(event.attempts, 8))
+                    event.available_at = datetime.now(UTC) + timedelta(seconds=delay)
+                else:
+                    event.status = "DEAD"
                 return True
             try:
                 result = publisher(event)
@@ -76,7 +86,6 @@ class OutboxService:
             except Exception as exc:
                 event.attempts += 1
                 event.last_error = f"{type(exc).__name__}: {exc}"[:2000]
-                durable_cleanup = event.event_type == "service.essay.cleanup_requested"
                 if event.attempts >= self._max_attempts and not durable_cleanup:
                     event.status = "DEAD"
                 else:

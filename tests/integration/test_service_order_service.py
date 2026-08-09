@@ -235,9 +235,56 @@ async def test_essay_order_is_queued_with_one_transactional_outbox_event(service
 
 
 @pytest.mark.asyncio
+async def test_independent_work_order_is_idempotent_with_one_outbox_event(
+    service_order_db,
+) -> None:  # type: ignore[no-untyped-def]
+    service = ServiceOrderService()
+    request = {
+        "subject": "Informatika",
+        "topic": "Algoritmlarning amaliy ahamiyati",
+        "language": "uz",
+        "length": "short",
+        "requirements": "Xulosada algoritmik fikrlash iborasini ishlat.",
+    }
+    async with service_order_db() as session:
+        first = await service.create_independent_work_order(
+            session,
+            telegram_user_id=777,
+            request_payload=request,
+            idempotency_key="independent-test-0001",
+        )
+    async with service_order_db() as session:
+        duplicate = await service.create_independent_work_order(
+            session,
+            telegram_user_id=777,
+            request_payload=request,
+            idempotency_key="independent-test-0001",
+        )
+        events = (await session.scalars(select(OutboxEvent))).all()
+
+    assert duplicate.id == first.id
+    assert first.service_type == ServiceType.INDEPENDENT_WORK.value
+    assert first.status == ServiceOrderStatus.QUEUED
+    assert first.title == "Algoritmlarning amaliy ahamiyati"
+    assert first.normalized_request["subject"] == "Informatika"
+    assert len(events) == 1
+    assert events[0].event_type == "service.independent.requested"
+    assert events[0].payload == {"service_order_id": first.id}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("service_type", "artifact_stem"),
+    [
+        (ServiceType.ESSAY, "referat"),
+        (ServiceType.INDEPENDENT_WORK, "mustaqil_ish"),
+    ],
+)
 async def test_service_artifact_retrieval_rejects_another_users_order(
     service_order_db,
     monkeypatch: pytest.MonkeyPatch,
+    service_type: ServiceType,
+    artifact_stem: str,
 ) -> None:  # type: ignore[no-untyped-def]
     async with service_order_db() as session:
         other = await UserService().register(
@@ -251,7 +298,7 @@ async def test_service_artifact_retrieval_rejects_another_users_order(
         async with session.begin():
             foreign_order = ServiceOrder(
                 user_id=other.id,
-                service_type=ServiceType.ESSAY.value,
+                service_type=service_type.value,
                 status=ServiceOrderStatus.ARTIFACTS_READY,
                 title="Boshqa foydalanuvchi",
                 request_payload={"topic": "Boshqa"},
@@ -259,8 +306,8 @@ async def test_service_artifact_retrieval_rejects_another_users_order(
                 request_hash="f" * 64,
                 generation_metadata={},
                 result_metadata={},
-                idempotency_key="foreign-artifact-order",
-                docx_storage_key="users/2/service-orders/9/referat_9.docx",
+                idempotency_key=f"foreign-artifact-order-{service_type.value}",
+                docx_storage_key=f"users/2/service-orders/9/{artifact_stem}_9.docx",
             )
             session.add(foreign_order)
         monkeypatch.setattr(menu_handlers, "Message", SimpleNamespace)
@@ -282,34 +329,59 @@ async def test_service_artifact_retrieval_rejects_another_users_order(
             Settings(app_env="test"),
         )
 
-    callback.answer.assert_awaited_once_with("Referat fayli hozir mavjud emas.", show_alert=True)
+    callback.answer.assert_awaited_once_with("Fayl hozir mavjud emas.", show_alert=True)
     build_storage.assert_not_called()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("service_type", "artifact_stem", "service_caption"),
+    [
+        (ServiceType.ESSAY, "referat", "Referat"),
+        (ServiceType.INDEPENDENT_WORK, "mustaqil_ish", "Mustaqil ish"),
+    ],
+)
 async def test_service_artifact_retrieval_sends_owned_docx_and_pdf(
     service_order_db,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    service_type: ServiceType,
+    artifact_stem: str,
+    service_caption: str,
 ) -> None:  # type: ignore[no-untyped-def]
     async with service_order_db() as session:
-        order = await ServiceOrderService().create_essay_order(
-            session,
-            telegram_user_id=777,
-            request_payload={
-                "topic": "Owned artifact",
-                "language": "uz",
-                "length": "short",
-                "requirements": "",
-            },
-            idempotency_key="essay-owned-artifact",
-        )
-        order.docx_storage_key = f"users/1/service-orders/{order.id}/referat.docx"
-        order.pdf_storage_key = f"users/1/service-orders/{order.id}/referat.pdf"
+        service = ServiceOrderService()
+        if service_type is ServiceType.ESSAY:
+            order = await service.create_essay_order(
+                session,
+                telegram_user_id=777,
+                request_payload={
+                    "topic": "Owned artifact",
+                    "language": "uz",
+                    "length": "short",
+                    "requirements": "",
+                },
+                idempotency_key="essay-owned-artifact",
+            )
+        else:
+            order = await service.create_independent_work_order(
+                session,
+                telegram_user_id=777,
+                request_payload={
+                    "subject": "Informatika",
+                    "topic": "Owned artifact",
+                    "language": "uz",
+                    "length": "short",
+                    "requirements": "",
+                },
+                idempotency_key="independent-owned-artifact",
+            )
+        order.docx_storage_key = f"users/1/service-orders/{order.id}/{artifact_stem}.docx"
+        order.pdf_storage_key = f"users/1/service-orders/{order.id}/{artifact_stem}.pdf"
         await session.commit()
 
-        docx = tmp_path / "referat.docx"
-        pdf = tmp_path / "referat.pdf"
+        docx = tmp_path / f"{artifact_stem}.docx"
+        pdf = tmp_path / f"{artifact_stem}.pdf"
         docx.write_bytes(b"docx")
         pdf.write_bytes(b"%PDF-1.7")
         storage = SimpleNamespace(download_for_user=AsyncMock(side_effect=[docx, pdf]))
@@ -338,6 +410,16 @@ async def test_service_artifact_retrieval_sends_owned_docx_and_pdf(
 
     assert message.answer_document.await_count == 2
     assert storage.download_for_user.await_count == 2
+    filenames = [call.args[0].filename for call in message.answer_document.await_args_list]
+    captions = [call.kwargs["caption"] for call in message.answer_document.await_args_list]
+    assert filenames == [
+        f"{artifact_stem}_{order.id}.docx",
+        f"{artifact_stem}_{order.id}.pdf",
+    ]
+    assert captions == [
+        f"📎 {service_caption} — DOCX",
+        f"📎 {service_caption} — PDF",
+    ]
     callback.answer.assert_awaited_once_with()
 
 

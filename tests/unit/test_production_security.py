@@ -38,6 +38,12 @@ def test_production_rejects_mock_ai_provider() -> None:
         Settings(**_production_settings(ai_provider="mock", ai_api_key=SecretStr("")))
 
 
+@pytest.mark.parametrize("timeout", [0, -1, 301, float("inf"), float("-inf"), float("nan")])
+def test_ai_timeout_must_be_positive_finite_and_bounded(timeout: float) -> None:
+    with pytest.raises(ValidationError, match="ai_timeout_seconds"):
+        Settings(ai_timeout_seconds=timeout)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "error_name"),
     [

@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     ai_base_url: str = "https://api.openai.com/v1"
     ai_api_key: SecretStr = SecretStr("")
     ai_model: str = "gpt-4.1-mini"
-    ai_timeout_seconds: float = 60.0
+    ai_timeout_seconds: float = Field(default=60.0, gt=0, le=300, allow_inf_nan=False)
     ai_max_retries: int = Field(default=3, ge=0, le=10)
     ai_retry_base_delay_seconds: float = Field(default=0.5, ge=0, le=10)
 

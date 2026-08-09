@@ -60,7 +60,7 @@ SAMPLES: dict[str, str] = {
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("service_type", list(ServiceType))
-async def test_every_service_fsm_reaches_preview_order_submission(
+async def test_every_service_fsm_reaches_expected_order_submission(
     monkeypatch: pytest.MonkeyPatch,
     service_type: ServiceType,
 ) -> None:
@@ -72,6 +72,7 @@ async def test_every_service_fsm_reaches_preview_order_submission(
     )
     preview_created = AsyncMock(return_value=SimpleNamespace(id=1))
     essay_created = AsyncMock(return_value=SimpleNamespace(id=1))
+    independent_created = AsyncMock(return_value=SimpleNamespace(id=1))
     monkeypatch.setattr(
         service_handlers,
         "ServiceOrderService",
@@ -79,6 +80,7 @@ async def test_every_service_fsm_reaches_preview_order_submission(
             return_value=SimpleNamespace(
                 create_preview_order=preview_created,
                 create_essay_order=essay_created,
+                create_independent_work_order=independent_created,
             )
         ),
     )
@@ -140,11 +142,16 @@ async def test_every_service_fsm_reaches_preview_order_submission(
         Localizer.load_default(),
     )
 
-    created = essay_created if service_type is ServiceType.ESSAY else preview_created
+    if service_type is ServiceType.ESSAY:
+        created = essay_created
+    elif service_type is ServiceType.INDEPENDENT_WORK:
+        created = independent_created
+    else:
+        created = preview_created
     created.assert_awaited_once()
     call = created.await_args.kwargs
     assert call["telegram_user_id"] == 777
-    if service_type is not ServiceType.ESSAY:
+    if service_type not in {ServiceType.ESSAY, ServiceType.INDEPENDENT_WORK}:
         assert call["service_type"] is service_type
     assert call["idempotency_key"].startswith("svc:777:")
     assert state.state is None

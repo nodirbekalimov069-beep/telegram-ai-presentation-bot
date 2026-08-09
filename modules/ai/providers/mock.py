@@ -16,6 +16,12 @@ from modules.ai.essay_contracts import (
     EssaySection,
     validate_essay_against_request,
 )
+from modules.ai.independent_work_contracts import (
+    IndependentWorkDocument,
+    IndependentWorkGenerationRequest,
+    IndependentWorkSection,
+    validate_independent_work_against_request,
+)
 
 _SECTION_TITLES = {
     "uz": (
@@ -170,3 +176,59 @@ class MockAIProvider:
             references=[],
         )
         return validate_essay_against_request(document, request)
+
+    async def generate_independent_work(
+        self, request: IndependentWorkGenerationRequest
+    ) -> IndependentWorkDocument:
+        section_count = {"short": 2, "medium": 4, "long": 6}[request.length]
+        requirement = request.additional_requirements or "Maxsus qo‘shimcha talab berilmagan"
+        topic_reference = (
+            request.topic if not any(char.isdigit() for char in request.topic) else "mavzu"
+        )
+        evidence = (
+            f"{topic_reference} doirasida amaliy qarorlar xavflarni oldindan baholash, inson "
+            f"nazoratini saqlash va natijani tekshirish bilan asoslanadi. {requirement}"
+            if request.additional_requirements
+            else None
+        )
+        section_labels = {
+            "uz": ["Birinchi", "Ikkinchi", "Uchinchi", "To‘rtinchi", "Beshinchi", "Oltinchi"],
+            "ru": ["Первое", "Второе", "Третье", "Четвёртое", "Пятое", "Шестое"],
+            "en": ["First", "Second", "Third", "Fourth", "Fifth", "Sixth"],
+        }[request.language]
+        paragraph = (
+            f"{topic_reference} {request.subject} fani doirasida nazariy tushunchalar, "
+            "sabab-oqibat aloqalari va amaliy vazifalar orqali izchil yoritiladi. Tahlilda "
+            "tekshirilmagan tashqi manbalar haqiqiy dalil sifatida ko‘rsatilmaydi, cheklovlar "
+            f"ochiq qayd etiladi va foydalanuvchi talabi hisobga olinadi: {requirement}."
+        )
+        document = IndependentWorkDocument(
+            title=request.topic,
+            subject=request.subject,
+            language=request.language,
+            objective=(
+                f"{topic_reference}ning {request.subject} fanidagi o‘rnini tushuntirish, "
+                "asosiy tushunchalarni tizimlashtirish va amaliy qo‘llanish yo‘llarini "
+                f"ko‘rsatish. Qo‘shimcha yo‘nalish: {requirement}."
+            ),
+            practical_tasks=[
+                f"{topic_reference} bo‘yicha asosiy tushunchalarni tavsiflash",
+                f"{request.subject} doirasidagi amaliy qo‘llanishlarni tahlil qilish",
+            ],
+            introduction=paragraph,
+            sections=[
+                IndependentWorkSection(
+                    heading=f"{section_labels[index - 1]} asosiy yo‘nalish",
+                    paragraphs=[paragraph, paragraph],
+                )
+                for index in range(1, section_count + 1)
+            ],
+            conclusion=(
+                f"{topic_reference} bo‘yicha mustaqil tahlil {request.subject} fanining nazariy "
+                "va amaliy jihatlarini bog‘lash zarurligini ko‘rsatadi. Natijalar ehtiyotkor "
+                f"umumlashtirildi.{f' {evidence}' if evidence else ''}"
+            ),
+            requirement_evidence=[evidence] if evidence else [],
+            references=[],
+        )
+        return validate_independent_work_against_request(document, request)

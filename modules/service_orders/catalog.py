@@ -76,6 +76,7 @@ _SERVICE_CATALOG = {
         "📝",
         (_text("subject"), _text("topic"), _LENGTH, _LANGUAGE, _REQUIREMENTS),
         "topic",
+        production_ready=True,
     ),
     ServiceType.COURSE_WORK: ServiceDefinition(
         ServiceType.COURSE_WORK,

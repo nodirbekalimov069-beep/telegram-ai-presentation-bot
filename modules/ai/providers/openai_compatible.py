@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import logging
+import math
 from collections.abc import Callable, Iterable
 from functools import partial
 from typing import TypeVar, cast
@@ -35,6 +36,12 @@ from modules.ai.essay_contracts import (
     build_essay_messages,
     validate_essay_against_request,
 )
+from modules.ai.independent_work_contracts import (
+    IndependentWorkDocument,
+    IndependentWorkGenerationRequest,
+    build_independent_work_messages,
+    materialize_and_validate_independent_work,
+)
 from modules.ai.presentation_agent import (
     AgentBackendContext,
     AgentReply,
@@ -44,6 +51,7 @@ from modules.ai.presentation_agent import (
 StructuredResponse = TypeVar("StructuredResponse", bound=BaseModel)
 _TRANSIENT_ERRORS = (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError)
 _CONTENT_BATCH_SIZE = 5
+_MAX_COMPLETION_TOKENS = 8192
 logger = logging.getLogger(__name__)
 
 
@@ -60,10 +68,16 @@ class OpenAICompatibleProvider:
     ) -> None:
         if not api_key:
             raise ValueError("AI API key is required")
+        if not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 300:
+            raise ValueError("AI timeout must be finite and within 0-300 seconds")
+        if not 0 <= max_retries <= 10:
+            raise ValueError("AI max_retries must be within 0-10")
+        if not math.isfinite(retry_base_delay_seconds) or not 0 <= retry_base_delay_seconds <= 10:
+            raise ValueError("AI retry delay must be finite and within 0-10 seconds")
         self._base_url = base_url.rstrip("/")
         self._model = model
-        self._max_retries = max(0, max_retries)
-        self._retry_base_delay_seconds = max(0.0, retry_base_delay_seconds)
+        self._max_retries = max_retries
+        self._retry_base_delay_seconds = retry_base_delay_seconds
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=self._base_url,
@@ -102,6 +116,7 @@ class OpenAICompatibleProvider:
                     messages=request_messages,
                     response_format=response_format,
                     temperature=0.2,
+                    max_tokens=_MAX_COMPLETION_TOKENS,
                 )
             except _TRANSIENT_ERRORS:
                 if attempt >= self._max_retries:
@@ -253,6 +268,18 @@ class OpenAICompatibleProvider:
             response_validator=partial(validate_essay_against_request, request=request),
         )
 
+    async def generate_independent_work(
+        self, request: IndependentWorkGenerationRequest
+    ) -> IndependentWorkDocument:
+        return await self._request_structured(
+            messages=cast(
+                Iterable[ChatCompletionMessageParam],
+                build_independent_work_messages(request),
+            ),
+            response_format=IndependentWorkDocument,
+            response_validator=partial(materialize_and_validate_independent_work, request=request),
+        )
+
     async def _request_json_object(
         self,
         *,
@@ -267,6 +294,7 @@ class OpenAICompatibleProvider:
                     messages=request_messages,
                     response_format={"type": "json_object"},
                     temperature=0.2,
+                    max_tokens=_MAX_COMPLETION_TOKENS,
                 )
             except _TRANSIENT_ERRORS:
                 if attempt >= self._max_retries:

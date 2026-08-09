@@ -94,3 +94,34 @@ def test_cleanup_requeue_persistence_failure_uses_coordination_retry(monkeypatch
         tasks._run_service_essay_cleanup_actor(52, 62)
 
     assert tasks._cleanup_persistence_retry_when(10_000, retry.value)
+
+
+def test_service_independent_actor_finalizes_after_timeout_budget_exhaustion(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    process = AsyncMock()
+    finalize = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        tasks,
+        "_current_timeout_failures",
+        lambda: tasks._settings.generation_max_retries + 1,
+    )
+    monkeypatch.setattr(tasks, "_process_service_independent", process)
+    monkeypatch.setattr(tasks, "_finalize_service_independent", finalize)
+
+    tasks._run_service_independent_actor(72)
+
+    finalize.assert_awaited_once_with(72)
+    process.assert_not_awaited()
+
+
+def test_independent_cleanup_failure_requeues_exact_outbox_event(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    cleanup = AsyncMock(side_effect=ConnectionError("object store unavailable"))
+    requeue = AsyncMock()
+    monkeypatch.setattr(tasks, "_cleanup_service_independent_artifacts", cleanup)
+    monkeypatch.setattr(tasks, "_requeue_service_independent_cleanup", requeue)
+
+    tasks._run_service_independent_cleanup_actor(73, 83)
+
+    cleanup.assert_awaited_once_with(73)
+    assert requeue.await_args.args[0] == 83

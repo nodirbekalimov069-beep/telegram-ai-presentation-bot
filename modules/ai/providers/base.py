@@ -9,6 +9,10 @@ from modules.ai.contracts import (
     PresentationRequest,
 )
 from modules.ai.essay_contracts import EssayDocument, EssayGenerationRequest
+from modules.ai.independent_work_contracts import (
+    IndependentWorkDocument,
+    IndependentWorkGenerationRequest,
+)
 
 
 class AIProvider(Protocol):
@@ -17,3 +21,7 @@ class AIProvider(Protocol):
     async def generate_content(self, request: ContentGenerationRequest) -> GeneratedContent: ...
 
     async def generate_essay(self, request: EssayGenerationRequest) -> EssayDocument: ...
+
+    async def generate_independent_work(
+        self, request: IndependentWorkGenerationRequest
+    ) -> IndependentWorkDocument: ...

@@ -122,11 +122,46 @@ class ServiceOrderService:
         request_payload: dict[str, Any],
         idempotency_key: str,
     ) -> ServiceOrder:
+        return await self._create_production_document_order(
+            session,
+            telegram_user_id=telegram_user_id,
+            service_type=ServiceType.ESSAY,
+            request_payload=request_payload,
+            idempotency_key=idempotency_key,
+        )
+
+    async def create_independent_work_order(
+        self,
+        session: AsyncSession,
+        *,
+        telegram_user_id: int,
+        request_payload: dict[str, Any],
+        idempotency_key: str,
+    ) -> ServiceOrder:
+        return await self._create_production_document_order(
+            session,
+            telegram_user_id=telegram_user_id,
+            service_type=ServiceType.INDEPENDENT_WORK,
+            request_payload=request_payload,
+            idempotency_key=idempotency_key,
+        )
+
+    async def _create_production_document_order(
+        self,
+        session: AsyncSession,
+        *,
+        telegram_user_id: int,
+        service_type: ServiceType,
+        request_payload: dict[str, Any],
+        idempotency_key: str,
+    ) -> ServiceOrder:
+        from modules.service_orders.document_services import document_service_profile
+
         if telegram_user_id <= 0:
             raise PermissionError("invalid Telegram identity")
         if not 8 <= len(idempotency_key) <= 64 or not idempotency_key.isascii():
             raise ValueError("invalid idempotency key")
-        service_type = ServiceType.ESSAY
+        profile = document_service_profile(service_type)
         payload = validate_service_request(service_type, request_payload)
         request_hash = _payload_hash(service_type, payload)
         now = datetime.now(UTC)
@@ -147,11 +182,12 @@ class ServiceOrderService:
                         service_type=service_type,
                         request_hash=request_hash,
                     )
+                definition = SERVICE_CATALOG[service_type]
                 order = ServiceOrder(
                     user_id=user.id,
                     service_type=service_type.value,
                     status=ServiceOrderStatus.QUEUED,
-                    title=_short_title(payload["topic"]),
+                    title=_short_title(payload[definition.title_field]),
                     request_payload=payload,
                     normalized_request=payload,
                     request_hash=request_hash,
@@ -164,10 +200,10 @@ class ServiceOrderService:
                 await session.flush()
                 await OutboxService().enqueue(
                     session,
-                    event_type="service.essay.requested",
+                    event_type=profile.requested_event,
                     aggregate_type="service_order",
                     aggregate_id=str(order.id),
-                    idempotency_key=f"service-essay:{order.id}:1",
+                    idempotency_key=f"service-{service_type.value}:{order.id}:1",
                     payload={"service_order_id": order.id},
                 )
                 return order

@@ -27,6 +27,10 @@ from modules.orders.models import Order
 from modules.plans.models import Plan
 from modules.service_orders.catalog import PRICING_CATEGORIES, SERVICE_CATALOG, ServiceType
 from modules.service_orders.dashboard import friendly_order_status
+from modules.service_orders.document_services import (
+    PRODUCTION_DOCUMENT_SERVICE_TYPES,
+    document_service_profile,
+)
 from modules.service_orders.models import ServiceOrder
 from modules.users.models import FreeDemoClaim, User
 from modules.users.service import MAX_FREE_DEMO_ATTEMPTS
@@ -481,12 +485,13 @@ async def _send_orders(
         )
     keyboard_rows = [nav] if nav else []
     for row in rows:
-        if str(row.service_type) == ServiceType.ESSAY.value and bool(row.artifact_ready):
+        if str(row.service_type) in PRODUCTION_DOCUMENT_SERVICE_TYPES and bool(row.artifact_ready):
+            row_service_type = ServiceType(str(row.service_type))
             keyboard_rows.append(
                 [
                     InlineKeyboardButton(
                         text=(
-                            f"📎 {localizer.text(user.selected_language, 'service.essay')} "
+                            f"📎 {localizer.text(user.selected_language, SERVICE_CATALOG[row_service_type].label_key)} "
                             f"#{row.item_id}"
                         ),
                         callback_data=f"sva:{row.item_id}",
@@ -526,7 +531,7 @@ async def retrieve_service_artifacts(
         select(ServiceOrder).where(
             ServiceOrder.id == order_id,
             ServiceOrder.user_id == user.id,
-            ServiceOrder.service_type == ServiceType.ESSAY.value,
+            ServiceOrder.service_type.in_(PRODUCTION_DOCUMENT_SERVICE_TYPES),
         )
     )
     if order is None or order.docx_storage_key is None:
@@ -535,6 +540,7 @@ async def retrieve_service_artifacts(
             show_alert=True,
         )
         return
+    profile = document_service_profile(order.service_type)
     await callback.answer()
     storage = build_storage(settings)
     root = settings.generation_work_root.expanduser().resolve() / "service-order-retrieval"
@@ -552,17 +558,24 @@ async def retrieve_service_artifacts(
                     continue
                 path = await storage.download_for_user(
                     key,
-                    workdir / f"referat_{order.id}.{artifact_type}",
+                    workdir / f"{profile.artifact_stem}_{order.id}.{artifact_type}",
                     user_id=user.id,
                 )
                 if path.stat().st_size > settings.max_upload_bytes:
                     oversized_count += 1
                     continue
                 await callback.message.answer_document(
-                    FSInputFile(path, filename=f"referat_{order.id}.{artifact_type}"),
+                    FSInputFile(
+                        path,
+                        filename=f"{profile.artifact_stem}_{order.id}.{artifact_type}",
+                    ),
                     caption=localizer.text(
                         user.selected_language,
-                        "orders.artifact_caption",
+                        (
+                            "orders.independent_artifact_caption"
+                            if profile.service_type is ServiceType.INDEPENDENT_WORK
+                            else "orders.artifact_caption"
+                        ),
                         artifact=artifact_type.upper(),
                     ),
                 )

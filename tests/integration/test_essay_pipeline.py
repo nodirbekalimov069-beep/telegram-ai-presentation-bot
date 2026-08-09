@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from pypdf import PdfWriter
+from reportlab.pdfgen import canvas
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -61,10 +61,15 @@ async def _create_order(factory: async_sessionmaker[AsyncSession]) -> ServiceOrd
 
 async def _fake_pdf(docx: Path, output_dir: Path, **_: object) -> Path:
     pdf = output_dir / f"{docx.stem}.pdf"
-    writer = PdfWriter()
-    writer.add_blank_page(width=595, height=842)
-    with pdf.open("wb") as stream:
-        writer.write(stream)
+    output = canvas.Canvas(str(pdf))
+    output.drawString(72, 760, "Raqamli iqtisodiyot")
+    for line in range(8):
+        output.drawString(
+            72,
+            730 - line * 24,
+            "Mazmunli referat matni raqamli iqtisodiyotning amaliy tomonlarini tushuntiradi.",
+        )
+    output.save()
     return pdf
 
 

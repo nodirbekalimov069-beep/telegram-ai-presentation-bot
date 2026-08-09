@@ -85,7 +85,11 @@ async def start_service(
         localizer.text(
             user.selected_language,
             (
-                "service.essay.notice"
+                (
+                    "service.essay.notice"
+                    if service_type is ServiceType.ESSAY
+                    else "service.independent.notice"
+                )
                 if SERVICE_CATALOG[service_type].production_ready
                 else "service.preview_notice"
             ),
@@ -301,6 +305,23 @@ def _safe_summary(
                 f"{escape(requirements)}",
             )
         )
+    if service_type is ServiceType.INDEPENDENT_WORK:
+        requirements = str(payload.get("requirements") or localizer.text(language, "service.none"))
+        return "\n".join(
+            (
+                f"<b>📝 {escape(localizer.text(language, 'service.independent'))}</b>",
+                f"<b>{escape(localizer.text(language, 'service.summary.subject'))}</b>: "
+                f"{escape(str(payload['subject']))}",
+                f"<b>{escape(localizer.text(language, 'service.summary.topic'))}</b>: "
+                f"{escape(str(payload['topic']))}",
+                f"<b>{escape(localizer.text(language, 'service.summary.length'))}</b>: "
+                f"{escape(localizer.option_label(language, str(payload['length'])))}",
+                f"<b>{escape(localizer.text(language, 'service.summary.language'))}</b>: "
+                f"{escape(localizer.option_label(language, str(payload['language'])))}",
+                f"<b>{escape(localizer.text(language, 'service.summary.requirements'))}</b>: "
+                f"{escape(requirements)}",
+            )
+        )
     lines: list[str] = []
     for field in definition.fields:
         value = payload[field.name]
@@ -435,6 +456,13 @@ async def submit_service_order(
                 request_payload=dict(data["fields"]),
                 idempotency_key=f"svc:{callback.from_user.id}:{token}",
             )
+        elif service_type is ServiceType.INDEPENDENT_WORK:
+            await service.create_independent_work_order(
+                session,
+                telegram_user_id=callback.from_user.id,
+                request_payload=dict(data["fields"]),
+                idempotency_key=f"svc:{callback.from_user.id}:{token}",
+            )
         else:
             await service.create_preview_order(
                 session,
@@ -450,9 +478,12 @@ async def submit_service_order(
         await callback.message.answer(localizer.text(language, "service.invalid"))
         return
     await state.clear()
-    created_key = (
-        "service.essay.created" if service_type is ServiceType.ESSAY else "service.created"
-    )
+    if service_type is ServiceType.ESSAY:
+        created_key = "service.essay.created"
+    elif service_type is ServiceType.INDEPENDENT_WORK:
+        created_key = "service.independent.created"
+    else:
+        created_key = "service.created"
     await callback.message.answer(localizer.text(language, created_key))
 
 

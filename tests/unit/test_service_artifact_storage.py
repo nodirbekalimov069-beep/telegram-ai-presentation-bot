@@ -52,6 +52,23 @@ async def test_service_artifact_storage_rejects_type_and_path_confusion(tmp_path
         )
 
 
+async def test_independent_work_artifact_key_uses_safe_service_filename(tmp_path: Path) -> None:
+    source = tmp_path / "work.docx"
+    source.write_bytes(b"PK\x03\x04-safe-docx")
+    storage = LocalStorage(tmp_path / "storage")
+
+    key = await storage.put_service_file(
+        source,
+        user_id=17,
+        service_order_id=43,
+        artifact_type="docx",
+        attempt_token="c" * 32,
+        service_type="independent",
+    )
+
+    assert key == f"users/17/service-orders/43/attempts/{'c' * 32}/mustaqil_ish_43.docx"
+
+
 async def test_s3_service_artifact_attempt_namespace_and_owner_delete(tmp_path: Path) -> None:
     class FakeS3Client:
         def __init__(self) -> None:

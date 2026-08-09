@@ -146,7 +146,19 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                 pdf = PdfReader(str(pdf_path))
                 if len(pdf.pages) <= 0:
                     raise RuntimeError("PDF has no pages")
-                pdf_result = {"bytes": pdf_path.stat().st_size, "pages": len(pdf.pages)}
+                extracted_text = " ".join((page.extract_text() or "") for page in pdf.pages)
+                normalized_text = " ".join(extracted_text.casefold().split())
+                if (
+                    len(normalized_text) < 100
+                    or " ".join(args.topic.casefold().split()) not in normalized_text
+                ):
+                    raise RuntimeError("PDF extracted text failed content parity")
+                pdf_result = {
+                    "bytes": pdf_path.stat().st_size,
+                    "pages": len(pdf.pages),
+                    "characters": len(normalized_text),
+                    "topic_present": True,
+                }
             if pdf_key is not None and pdf_message_id is None:
                 raise RuntimeError("PDF exists but was not delivered")
             return {

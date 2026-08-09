@@ -15,6 +15,7 @@ from core.outbox.models import OutboxEvent
 
 from modules.files.storage import Storage
 from modules.service_orders.catalog import ServiceType
+from modules.service_orders.document_services import document_service_profile
 from modules.service_orders.models import ServiceOrder
 from modules.service_orders.service import ServiceOrderStatus
 from modules.users.models import User
@@ -43,9 +44,22 @@ class EssayArtifactTooLarge(RuntimeError):
 
 
 _CAPTIONS = {
-    "uz": {"docx": "✅ Referat tayyor — DOCX", "pdf": "✅ Referat tayyor — PDF"},
-    "ru": {"docx": "✅ Реферат готов — DOCX", "pdf": "✅ Реферат готов — PDF"},
-    "en": {"docx": "✅ Academic essay ready — DOCX", "pdf": "✅ Academic essay ready — PDF"},
+    ServiceType.ESSAY: {
+        "uz": {"docx": "✅ Referat tayyor — DOCX", "pdf": "✅ Referat tayyor — PDF"},
+        "ru": {"docx": "✅ Реферат готов — DOCX", "pdf": "✅ Реферат готов — PDF"},
+        "en": {"docx": "✅ Academic essay ready — DOCX", "pdf": "✅ Academic essay ready — PDF"},
+    },
+    ServiceType.INDEPENDENT_WORK: {
+        "uz": {"docx": "✅ Mustaqil ish tayyor — DOCX", "pdf": "✅ Mustaqil ish tayyor — PDF"},
+        "ru": {
+            "docx": "✅ Самостоятельная работа готова — DOCX",
+            "pdf": "✅ Самостоятельная работа готова — PDF",
+        },
+        "en": {
+            "docx": "✅ Independent assignment ready — DOCX",
+            "pdf": "✅ Independent assignment ready — PDF",
+        },
+    },
 }
 
 
@@ -59,14 +73,15 @@ async def _ensure_orphan_cleanup_event(
     ]
     if not candidates:
         return
-    idempotency_key = f"service-essay-cleanup:{order.id}"
+    profile = document_service_profile(order.service_type)
+    idempotency_key = f"service-{profile.service_type.value}-cleanup:{order.id}"
     existing = await session.scalar(
         select(OutboxEvent.id).where(OutboxEvent.idempotency_key == idempotency_key)
     )
     if existing is None:
         session.add(
             OutboxEvent(
-                event_type="service.essay.cleanup_requested",
+                event_type=profile.cleanup_event,
                 aggregate_type="service_order",
                 aggregate_id=str(order.id),
                 idempotency_key=idempotency_key,
@@ -93,6 +108,7 @@ class TelegramEssayDelivery:
         work_root: Path,
         max_upload_bytes: int = 49_000_000,
         lease_seconds: int = 300,
+        service_type: ServiceType = ServiceType.ESSAY,
     ) -> None:
         if max_upload_bytes < 1 or lease_seconds < 30:
             raise ValueError("invalid delivery limits")
@@ -101,6 +117,7 @@ class TelegramEssayDelivery:
         self._work_root.mkdir(parents=True, exist_ok=True)
         self._max_upload_bytes = max_upload_bytes
         self._lease_seconds = lease_seconds
+        self._profile = document_service_profile(service_type)
 
     async def deliver(
         self,
@@ -115,8 +132,8 @@ class TelegramEssayDelivery:
             order = await session.scalar(
                 select(ServiceOrder).where(ServiceOrder.id == service_order_id).with_for_update()
             )
-            if order is None or order.service_type != ServiceType.ESSAY.value:
-                raise LookupError("essay order not found")
+            if order is None or order.service_type != self._profile.service_type.value:
+                raise LookupError("document service order not found")
             if order.delivery_status in {"DELIVERED", "AMBIGUOUS", "TERMINAL_FAILED"}:
                 return self._result(order)
             expires_at = order.delivery_lease_expires_at
@@ -133,10 +150,10 @@ class TelegramEssayDelivery:
                 order.delivery_error = "delivery acceptance is ambiguous; automatic resend disabled"
                 return self._result(order)
             if order.status != ServiceOrderStatus.ARTIFACTS_READY or not order.docx_storage_key:
-                raise ValueError("essay artifacts are not ready")
+                raise ValueError("document service artifacts are not ready")
             user = await session.get(User, order.user_id)
             if user is None or user.is_blocked:
-                raise PermissionError("essay owner is missing or blocked")
+                raise PermissionError("document service owner is missing or blocked")
             order.delivery_status = "SENDING"
             order.delivery_attempts += 1
             order.delivery_lease_token = lease_token
@@ -144,7 +161,8 @@ class TelegramEssayDelivery:
             order.delivery_error = None
             telegram_user_id = user.telegram_user_id
             user_id = user.id
-            language = user.selected_language if user.selected_language in _CAPTIONS else "uz"
+            captions = _CAPTIONS[self._profile.service_type]
+            language = user.selected_language if user.selected_language in captions else "uz"
             docx_key = order.docx_storage_key
             pdf_key = order.pdf_storage_key
             docx_message_id = order.docx_telegram_message_id
@@ -152,13 +170,13 @@ class TelegramEssayDelivery:
 
         try:
             with tempfile.TemporaryDirectory(
-                prefix=f"essay-delivery-{service_order_id}-",
+                prefix=f"{self._profile.artifact_stem}-delivery-{service_order_id}-",
                 dir=self._work_root,
             ) as directory:
                 workdir = Path(directory)
                 docx_path = await self._storage.download_for_user(
                     docx_key,
-                    workdir / f"referat_{service_order_id}.docx",
+                    workdir / f"{self._profile.artifact_stem}_{service_order_id}.docx",
                     user_id=user_id,
                 )
                 self._check_size(docx_path)
@@ -171,12 +189,12 @@ class TelegramEssayDelivery:
                         telegram_user_id=telegram_user_id,
                         path=docx_path,
                         artifact="docx",
-                        caption=_CAPTIONS[language]["docx"],
+                        caption=captions[language]["docx"],
                     )
                 if pdf_key is not None and pdf_message_id is None:
                     pdf_path = await self._storage.download_for_user(
                         pdf_key,
-                        workdir / f"referat_{service_order_id}.pdf",
+                        workdir / f"{self._profile.artifact_stem}_{service_order_id}.pdf",
                         user_id=user_id,
                     )
                     self._check_size(pdf_path)
@@ -188,7 +206,7 @@ class TelegramEssayDelivery:
                         telegram_user_id=telegram_user_id,
                         path=pdf_path,
                         artifact="pdf",
-                        caption=_CAPTIONS[language]["pdf"],
+                        caption=captions[language]["pdf"],
                     )
             return await self._mark_delivered(
                 session_factory,
@@ -218,12 +236,17 @@ class TelegramEssayDelivery:
         artifact: str,
         caption: str,
     ) -> int:
+        await self._renew_delivery_lease(
+            session_factory,
+            service_order_id=service_order_id,
+            lease_token=lease_token,
+        )
         try:
             message = await bot.send_document(
                 chat_id=telegram_user_id,
                 document=FSInputFile(
                     path,
-                    filename=f"referat_{service_order_id}.{artifact}",
+                    filename=f"{self._profile.artifact_stem}_{service_order_id}.{artifact}",
                 ),
                 caption=caption,
             )
@@ -248,6 +271,25 @@ class TelegramEssayDelivery:
                     f"{artifact} ambiguity persistence is pending"
                 ) from persistence_exc
             raise EssayDeliveryAmbiguous(f"{artifact} delivery acceptance is ambiguous") from exc
+
+    async def _renew_delivery_lease(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        service_order_id: int,
+        lease_token: str,
+    ) -> None:
+        async with session_factory() as session, session.begin():
+            order = await session.get(ServiceOrder, service_order_id, with_for_update=True)
+            if (
+                order is None
+                or order.delivery_status != "SENDING"
+                or order.delivery_lease_token != lease_token
+            ):
+                raise EssayDeliveryLeaseLost("delivery lease was lost")
+            order.delivery_lease_expires_at = datetime.now(UTC) + timedelta(
+                seconds=self._lease_seconds
+            )
 
     def _check_size(self, path: Path) -> None:
         if path.stat().st_size > self._max_upload_bytes:
@@ -340,13 +382,34 @@ class TelegramEssayDelivery:
         )
 
 
-async def mark_terminal_essay_delivery_failure(
-    session_factory: async_sessionmaker[AsyncSession], *, service_order_id: int
+class TelegramIndependentWorkDelivery(TelegramEssayDelivery):
+    def __init__(
+        self,
+        *,
+        storage: Storage,
+        work_root: Path,
+        max_upload_bytes: int = 49_000_000,
+        lease_seconds: int = 300,
+    ) -> None:
+        super().__init__(
+            storage=storage,
+            work_root=work_root,
+            max_upload_bytes=max_upload_bytes,
+            lease_seconds=lease_seconds,
+            service_type=ServiceType.INDEPENDENT_WORK,
+        )
+
+
+async def mark_terminal_document_delivery_failure(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    service_order_id: int,
+    service_type: ServiceType,
 ) -> bool:
     now = datetime.now(UTC)
     async with session_factory() as session, session.begin():
         order = await session.get(ServiceOrder, service_order_id, with_for_update=True)
-        if order is None or order.service_type != ServiceType.ESSAY.value:
+        if order is None or order.service_type != service_type.value:
             return True
         if order.delivery_status in {"DELIVERED", "AMBIGUOUS", "TERMINAL_FAILED"}:
             await _ensure_orphan_cleanup_event(session, order, now=now)
@@ -375,3 +438,23 @@ async def mark_terminal_essay_delivery_failure(
         order.delivery_lease_expires_at = None
         await _ensure_orphan_cleanup_event(session, order, now=now)
         return True
+
+
+async def mark_terminal_essay_delivery_failure(
+    session_factory: async_sessionmaker[AsyncSession], *, service_order_id: int
+) -> bool:
+    return await mark_terminal_document_delivery_failure(
+        session_factory,
+        service_order_id=service_order_id,
+        service_type=ServiceType.ESSAY,
+    )
+
+
+async def mark_terminal_independent_work_delivery_failure(
+    session_factory: async_sessionmaker[AsyncSession], *, service_order_id: int
+) -> bool:
+    return await mark_terminal_document_delivery_failure(
+        session_factory,
+        service_order_id=service_order_id,
+        service_type=ServiceType.INDEPENDENT_WORK,
+    )

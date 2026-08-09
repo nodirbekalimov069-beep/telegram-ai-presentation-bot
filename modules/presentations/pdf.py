@@ -106,3 +106,29 @@ def validate_pdf(path: Path, *, expected_pages: int | None) -> PdfQAReport:
     except Exception as exc:
         issues.append(f"invalid PDF: {type(exc).__name__}")
     return PdfQAReport(page_count=page_count, issues=tuple(issues))
+
+
+def validate_text_pdf(
+    path: Path,
+    *,
+    expected_phrases: tuple[str, ...],
+    minimum_characters: int = 100,
+) -> PdfQAReport:
+    """Validate a document PDF structurally and against its extracted text."""
+    report = validate_pdf(path, expected_pages=None)
+    issues = list(report.issues)
+    if issues:
+        return report
+    try:
+        reader = PdfReader(str(path), strict=True)
+        extracted = " ".join((page.extract_text() or "") for page in reader.pages)
+        normalized = " ".join(extracted.casefold().split())
+        if len(normalized) < minimum_characters:
+            issues.append("PDF extracted text is empty or too short")
+        for phrase in expected_phrases:
+            expected = " ".join(phrase.casefold().split())
+            if expected not in normalized:
+                issues.append("PDF extracted text is missing expected document content")
+    except Exception as exc:
+        issues.append(f"PDF text extraction failed: {type(exc).__name__}")
+    return PdfQAReport(page_count=report.page_count, issues=tuple(issues))

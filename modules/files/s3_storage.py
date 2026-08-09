@@ -9,6 +9,7 @@ from botocore.client import BaseClient
 from botocore.exceptions import ClientError
 
 from modules.files.storage import StorageAccessDenied, _valid_attempt_token
+from modules.service_orders.document_services import document_service_profile
 
 
 class S3Storage:
@@ -74,6 +75,7 @@ class S3Storage:
         service_order_id: int,
         artifact_type: str,
         attempt_token: str,
+        service_type: str = "essay",
     ) -> str:
         path = source.expanduser().resolve(strict=True)
         key = self.service_file_key(
@@ -81,6 +83,7 @@ class S3Storage:
             service_order_id=service_order_id,
             artifact_type=artifact_type,
             attempt_token=attempt_token,
+            service_type=service_type,
         )
         await asyncio.to_thread(
             self._client.upload_file,
@@ -106,14 +109,16 @@ class S3Storage:
         service_order_id: int,
         artifact_type: str,
         attempt_token: str,
+        service_type: str = "essay",
     ) -> str:
         if artifact_type not in {"docx", "pdf"}:
             raise ValueError(f"unsupported service artifact type: {artifact_type}")
         if user_id <= 0 or service_order_id <= 0 or not _valid_attempt_token(attempt_token):
             raise ValueError("invalid service artifact coordinates")
+        profile = document_service_profile(service_type)
         return (
             f"users/{user_id}/service-orders/{service_order_id}/attempts/{attempt_token}/"
-            f"referat_{service_order_id}.{artifact_type}"
+            f"{profile.artifact_stem}_{service_order_id}.{artifact_type}"
         )
 
     async def exists(self, key: str) -> bool:
