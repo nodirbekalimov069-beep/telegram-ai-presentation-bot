@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, open } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +14,28 @@ const HISTORICAL_ASSET_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../assets/historical",
 );
+const HEIF_BRANDS = new Set([
+  "avif", "avis", "heic", "heis", "heix", "heim",
+  "hevc", "hevx", "mif1", "msf1",
+]);
+
+async function assertSafeImageFormat(imagePath) {
+  const handle = await open(imagePath, "r");
+  try {
+    const header = Buffer.alloc(16);
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    const first = header.subarray(0, bytesRead);
+    const vulnerable =
+      first.subarray(0, 4).toString("ascii") === "icns" ||
+      (first[0] === 0xff && first[1] === 0x0a) ||
+      first.subarray(4, 8).toString("ascii") === "JXL " ||
+      (first.subarray(4, 8).toString("ascii") === "ftyp" &&
+        HEIF_BRANDS.has(first.subarray(8, 12).toString("ascii")));
+    if (vulnerable) throw new Error("unsupported image format");
+  } finally {
+    await handle.close();
+  }
+}
 
 function estimateLines(text, charsPerLine) {
   return String(text)
@@ -933,7 +955,12 @@ function addSwot(slide, layout, theme) {
 
 async function addImages(slide, imagePaths, theme) {
   if (!imagePaths?.length) return;
-  await Promise.all(imagePaths.map((imagePath) => access(imagePath)));
+  await Promise.all(
+    imagePaths.map(async (imagePath) => {
+      await access(imagePath);
+      await assertSafeImageFormat(imagePath);
+    }),
+  );
   const count = imagePaths.length;
   const gap = 0.22;
   const w = (7.35 - gap * (count - 1)) / count;

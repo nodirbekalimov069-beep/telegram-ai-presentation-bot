@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -109,4 +109,30 @@ test("historical case studies embed curated public-domain imagery without AI bra
   const slideXml = await zip.file("ppt/slides/slide2.xml").async("string");
   assert.doesNotMatch(slideXml, /PRESENTATION AI/);
   assert.match(slideXml, /AKADEMIK TAQDIMOT/);
+});
+
+test("renderer rejects vulnerable ICNS/JXL/HEIF parsers on direct calls", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "presentation-hostile-image-"));
+  const hostile = path.join(dir, "hostile.bin");
+  await writeFile(hostile, Buffer.from("icns000000000000", "ascii"));
+  const block = {
+    heading: "Dalil",
+    body: "Tekshirilmagan binary fayl renderer parseriga uzatilmaydi; format signaturasi avval xavfsizlik nazoratidan o‘tadi."
+  };
+  const deck = {
+    title: "Xavfsiz render",
+    language: "uz",
+    theme,
+    plan_code: "PREMIUM_PLUS",
+    slides: [
+      { title: "Kirish", bullets: ["A"], content_blocks: [block], sources: [] },
+      { title: "Tasvir", bullets: [], content_blocks: [block], image_paths: [hostile], sources: [] },
+      { title: "Xulosa", bullets: ["B"], content_blocks: [block], sources: [] }
+    ]
+  };
+
+  await assert.rejects(
+    renderPresentation(deck, path.join(dir, "deck.pptx")),
+    /unsupported image format/,
+  );
 });
