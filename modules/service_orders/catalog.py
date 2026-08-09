@@ -65,9 +65,10 @@ _SERVICE_CATALOG = {
     ServiceType.ESSAY: ServiceDefinition(
         ServiceType.ESSAY,
         "service.essay",
-        "📄",
+        "📚",
         (_text("topic"), _LANGUAGE, _LENGTH, _REQUIREMENTS),
         "topic",
+        production_ready=True,
     ),
     ServiceType.INDEPENDENT_WORK: ServiceDefinition(
         ServiceType.INDEPENDENT_WORK,

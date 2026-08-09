@@ -76,9 +76,11 @@ class OutboxService:
             except Exception as exc:
                 event.attempts += 1
                 event.last_error = f"{type(exc).__name__}: {exc}"[:2000]
-                if event.attempts >= self._max_attempts:
+                durable_cleanup = event.event_type == "service.essay.cleanup_requested"
+                if event.attempts >= self._max_attempts and not durable_cleanup:
                     event.status = "DEAD"
                 else:
+                    event.status = "PENDING"
                     delay = min(300, 2 ** min(event.attempts, 8))
                     event.available_at = datetime.now(UTC) + timedelta(seconds=delay)
                 return True

@@ -84,13 +84,15 @@ class LibreOfficeConverter:
         return output
 
 
-def validate_pdf(path: Path, *, expected_pages: int) -> PdfQAReport:
+def validate_pdf(path: Path, *, expected_pages: int | None) -> PdfQAReport:
     issues: list[str] = []
     page_count = 0
     try:
         reader = PdfReader(str(path), strict=True)
         page_count = len(reader.pages)
-        if page_count != expected_pages:
+        if page_count <= 0:
+            issues.append("PDF has no pages")
+        if expected_pages is not None and page_count != expected_pages:
             issues.append(f"expected {expected_pages} PDF pages, found {page_count}")
         dimensions: list[tuple[float, float]] = []
         for index, page in enumerate(reader.pages, start=1):

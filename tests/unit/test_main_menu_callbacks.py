@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -7,6 +8,7 @@ from apps.bot.handlers import fallback as fallback_handlers
 from apps.bot.handlers import menu as menu_handlers
 from apps.bot.handlers import services as service_handlers
 from apps.bot.handlers import start as start_handlers
+from apps.bot.handlers.menu import _as_utc, _parse_orders_callback
 from apps.bot.localization import Localizer
 from core.config import Settings
 
@@ -352,3 +354,17 @@ async def test_stale_orders_callback_clears_active_flow(
 
     state.clear.assert_awaited_once_with()
     callback.answer.assert_awaited_once_with()
+
+
+def test_naive_database_watermark_is_encoded_as_utc() -> None:
+    naive = datetime(2026, 1, 15, 12, 6)
+    assert _as_utc(naive) == datetime(2026, 1, 15, 12, 6, tzinfo=UTC)
+
+
+def test_orders_callback_parser_rejects_unbounded_or_invalid_values() -> None:
+    assert _parse_orders_callback("orders:" + "9" * 10_000) is None
+    assert _parse_orders_callback("orders:1:" + "9" * 10_000 + ":0:1") is None
+    assert _parse_orders_callback("orders:1:1768507560000000:2:1") is None
+    assert _parse_orders_callback("orders:1:1768507560000000:0:0") is None
+    parsed = _parse_orders_callback("orders:1:1768478760000000:1:6")
+    assert parsed == (1, (datetime(2026, 1, 15, 12, 6, tzinfo=UTC), 1, 6))

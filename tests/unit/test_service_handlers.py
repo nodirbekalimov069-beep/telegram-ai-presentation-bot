@@ -70,11 +70,17 @@ async def test_every_service_fsm_reaches_preview_order_submission(
         "current_user",
         AsyncMock(return_value=SimpleNamespace(selected_language="uz")),
     )
-    created = AsyncMock(return_value=SimpleNamespace(id=1))
+    preview_created = AsyncMock(return_value=SimpleNamespace(id=1))
+    essay_created = AsyncMock(return_value=SimpleNamespace(id=1))
     monkeypatch.setattr(
         service_handlers,
         "ServiceOrderService",
-        Mock(return_value=SimpleNamespace(create_preview_order=created)),
+        Mock(
+            return_value=SimpleNamespace(
+                create_preview_order=preview_created,
+                create_essay_order=essay_created,
+            )
+        ),
     )
     state = FakeState()
     message = SimpleNamespace(answer=AsyncMock(), from_user=SimpleNamespace(id=777))
@@ -134,10 +140,12 @@ async def test_every_service_fsm_reaches_preview_order_submission(
         Localizer.load_default(),
     )
 
+    created = essay_created if service_type is ServiceType.ESSAY else preview_created
     created.assert_awaited_once()
     call = created.await_args.kwargs
     assert call["telegram_user_id"] == 777
-    assert call["service_type"] is service_type
+    if service_type is not ServiceType.ESSAY:
+        assert call["service_type"] is service_type
     assert call["idempotency_key"].startswith("svc:777:")
     assert state.state is None
 
@@ -325,3 +333,137 @@ async def test_unknown_service_callback_uses_telegram_language_for_unregistered_
     callback.answer.assert_awaited_once_with(
         "This button has expired. Please choose the service again."
     )
+
+
+@pytest.mark.asyncio
+async def test_essay_requirements_can_be_skipped_with_scoped_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(service_handlers, "Message", SimpleNamespace)
+    state = FakeState()
+    await state.set_state(ServiceFlow.collecting)
+    await state.set_data(
+        {
+            "service_type": ServiceType.ESSAY.value,
+            "flow_token": "active123",
+            "field_index": 3,
+            "fields": {"topic": "AI", "language": "uz", "length": "short"},
+            "language": "uz",
+        }
+    )
+    callback = SimpleNamespace(
+        data="svk:active123:3",
+        message=SimpleNamespace(answer=AsyncMock()),
+        answer=AsyncMock(),
+    )
+    await service_handlers.optional_requirements_action(
+        callback,
+        state,
+        Localizer.load_default(),  # type: ignore[arg-type]
+    )
+    assert state.state is ServiceFlow.confirming
+    assert state.data["fields"]["requirements"] == ""  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_confirmation_edit_restarts_same_scoped_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(service_handlers, "Message", SimpleNamespace)
+    state = FakeState()
+    await state.set_state(ServiceFlow.confirming)
+    await state.set_data(
+        {
+            "service_type": ServiceType.ESSAY.value,
+            "flow_token": "active123",
+            "field_index": 4,
+            "fields": {"topic": "AI", "language": "uz", "length": "short"},
+            "language": "uz",
+        }
+    )
+    callback = SimpleNamespace(
+        data="sve:active123",
+        message=SimpleNamespace(answer=AsyncMock()),
+        from_user=SimpleNamespace(id=777, language_code="uz"),
+        answer=AsyncMock(),
+    )
+    await service_handlers.edit_service_order(
+        callback,
+        state,
+        AsyncMock(),
+        Localizer.load_default(),  # type: ignore[arg-type]
+    )
+    assert state.state is ServiceFlow.collecting
+    assert state.data["field_index"] == 0
+    assert state.data["fields"] == {}
+    assert state.data["flow_token"] != "active123"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("language", ["uz", "ru", "en"])
+async def test_persistent_cancel_label_never_becomes_service_payload(language: str) -> None:
+    localizer = Localizer.load_default()
+    state = FakeState()
+    await state.set_state(ServiceFlow.collecting)
+    await state.set_data(
+        {
+            "service_type": ServiceType.ESSAY.value,
+            "flow_token": "active123",
+            "field_index": 0,
+            "fields": {},
+            "language": language,
+        }
+    )
+    message = SimpleNamespace(
+        text=localizer.text(language, "common.cancel"),
+        answer=AsyncMock(),
+    )
+
+    await service_handlers.service_cancel_text(message, state, localizer)  # type: ignore[arg-type]
+
+    assert state.state is None
+    assert state.data == {}
+    message.answer.assert_awaited_once_with(localizer.text(language, "service.cancelled"))
+
+
+@pytest.mark.asyncio
+async def test_persistent_back_label_uses_service_navigation_not_payload() -> None:
+    localizer = Localizer.load_default()
+    state = FakeState()
+    await state.set_state(ServiceFlow.collecting)
+    await state.set_data(
+        {
+            "service_type": ServiceType.ESSAY.value,
+            "flow_token": "active123",
+            "field_index": 1,
+            "fields": {"topic": "AI"},
+            "language": "uz",
+        }
+    )
+    message = SimpleNamespace(
+        text=localizer.text("uz", "common.back"),
+        answer=AsyncMock(),
+    )
+
+    await service_handlers.service_back_text(message, state, localizer)  # type: ignore[arg-type]
+
+    assert state.data["field_index"] == 0
+    assert state.data["fields"] == {}
+
+
+def test_boolean_confirmation_uses_localized_yes_no_not_raw_true() -> None:
+    localizer = Localizer.load_default()
+    payload = {
+        "topic": "AI testi",
+        "language": "uz",
+        "difficulty": "medium",
+        "question_count": 10,
+        "option_count": 4,
+        "answer_key": True,
+        "requirements": "",
+    }
+
+    for language, expected in (("uz", "Ha"), ("ru", "Да"), ("en", "Yes")):
+        summary = service_handlers._safe_summary(ServiceType.QUIZ, payload, localizer, language)
+        assert expected in summary
+        assert "true" not in summary.lower()

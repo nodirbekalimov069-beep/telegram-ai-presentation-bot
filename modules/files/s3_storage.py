@@ -8,7 +8,7 @@ import boto3
 from botocore.client import BaseClient
 from botocore.exceptions import ClientError
 
-from modules.files.storage import StorageAccessDenied
+from modules.files.storage import StorageAccessDenied, _valid_attempt_token
 
 
 class S3Storage:
@@ -66,6 +66,56 @@ class S3Storage:
         )
         return key
 
+    async def put_service_file(
+        self,
+        source: Path,
+        *,
+        user_id: int,
+        service_order_id: int,
+        artifact_type: str,
+        attempt_token: str,
+    ) -> str:
+        path = source.expanduser().resolve(strict=True)
+        key = self.service_file_key(
+            user_id=user_id,
+            service_order_id=service_order_id,
+            artifact_type=artifact_type,
+            attempt_token=attempt_token,
+        )
+        await asyncio.to_thread(
+            self._client.upload_file,
+            str(path),
+            self._bucket,
+            key,
+            ExtraArgs={
+                "ContentType": {
+                    "docx": (
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    ),
+                    "pdf": "application/pdf",
+                }[artifact_type],
+                "ServerSideEncryption": "AES256",
+            },
+        )
+        return key
+
+    def service_file_key(
+        self,
+        *,
+        user_id: int,
+        service_order_id: int,
+        artifact_type: str,
+        attempt_token: str,
+    ) -> str:
+        if artifact_type not in {"docx", "pdf"}:
+            raise ValueError(f"unsupported service artifact type: {artifact_type}")
+        if user_id <= 0 or service_order_id <= 0 or not _valid_attempt_token(attempt_token):
+            raise ValueError("invalid service artifact coordinates")
+        return (
+            f"users/{user_id}/service-orders/{service_order_id}/attempts/{attempt_token}/"
+            f"referat_{service_order_id}.{artifact_type}"
+        )
+
     async def exists(self, key: str) -> bool:
         self._validate_key(key)
         try:
@@ -96,6 +146,10 @@ class S3Storage:
             str(target),
         )
         return target
+
+    async def delete_for_user(self, key: str, *, user_id: int) -> None:
+        self._validate_owner(key, user_id)
+        await asyncio.to_thread(self._client.delete_object, Bucket=self._bucket, Key=key)
 
     @staticmethod
     def _validate_key(key: str) -> None:

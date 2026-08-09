@@ -29,6 +29,12 @@ from modules.ai.contracts import (
     parse_outline,
     validate_generated_content,
 )
+from modules.ai.essay_contracts import (
+    EssayDocument,
+    EssayGenerationRequest,
+    build_essay_messages,
+    validate_essay_against_request,
+)
 from modules.ai.presentation_agent import (
     AgentBackendContext,
     AgentReply,
@@ -141,7 +147,22 @@ class OpenAICompatibleProvider:
             if message.refusal:
                 raise AIContractError("AI provider refused the structured request")
             if message.parsed is None:
-                raise AIContractError("AI provider returned no structured response")
+                if attempt >= self._max_retries:
+                    raise AIContractError("AI provider repeatedly returned no structured response")
+                request_messages.append(
+                    cast(
+                        ChatCompletionMessageParam,
+                        {
+                            "role": "system",
+                            "content": (
+                                "The previous response contained no valid structured object. "
+                                "Return one corrected JSON object matching the required schema."
+                            ),
+                        },
+                    )
+                )
+                await asyncio.sleep(self._retry_base_delay_seconds * (2**attempt))
+                continue
             if response_validator is not None:
                 try:
                     return response_validator(message.parsed)
@@ -220,6 +241,16 @@ class OpenAICompatibleProvider:
             combined,
             expected_slide_count=len(raw_slides),
             language=request.language,
+        )
+
+    async def generate_essay(self, request: EssayGenerationRequest) -> EssayDocument:
+        return await self._request_structured(
+            messages=cast(
+                Iterable[ChatCompletionMessageParam],
+                build_essay_messages(request),
+            ),
+            response_format=EssayDocument,
+            response_validator=partial(validate_essay_against_request, request=request),
         )
 
     async def _request_json_object(

@@ -23,8 +23,10 @@ def _payload_int(event: OutboxEvent, key: str, *, default: int | None = None) ->
 
 async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
     from apps.worker.tasks import (
+        cleanup_service_essay_artifacts,
         generate_presentation,
         generate_priority_presentation,
+        generate_service_essay,
         process_paid_order,
     )
 
@@ -46,9 +48,17 @@ async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
     async def publish_paid(event: OutboxEvent) -> None:
         process_paid_order.send(_payload_int(event, "order_id"))
 
+    async def publish_essay(event: OutboxEvent) -> None:
+        generate_service_essay.send(_payload_int(event, "service_order_id"))
+
+    async def publish_essay_cleanup(event: OutboxEvent) -> None:
+        cleanup_service_essay_artifacts.send(_payload_int(event, "service_order_id"), event.id)
+
     publishers: dict[str, Publisher] = {
         "generation.requested": publish_generation,
         "payment.paid": publish_paid,
+        "service.essay.requested": publish_essay,
+        "service.essay.cleanup_requested": publish_essay_cleanup,
     }
     service = OutboxService()
     try:

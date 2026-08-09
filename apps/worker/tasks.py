@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
 
 import dramatiq
 from dramatiq.brokers.redis import RedisBroker
@@ -10,6 +11,7 @@ from sqlalchemy import select
 
 from core.config import get_settings
 from core.database.session import create_engine, create_session_factory
+from core.outbox.models import OutboxEvent
 from modules.ai.factory import build_ai_provider, close_ai_provider
 from modules.files.factory import build_storage
 from modules.presentations.delivery import (
@@ -26,6 +28,21 @@ from modules.presentations.generation import (
     mark_terminal_generation_failure,
 )
 from modules.presentations.pdf import LibreOfficeConverter
+from modules.service_orders.essay_delivery import (
+    EssayDeliveryAmbiguous,
+    EssayDeliveryAmbiguousPersistencePending,
+    EssayDeliveryInProgress,
+    EssayDeliveryLeaseLost,
+    TelegramEssayDelivery,
+    mark_terminal_essay_delivery_failure,
+)
+from modules.service_orders.essay_pipeline import (
+    EssayLeaseBusy,
+    EssayPipeline,
+    EssayTerminalError,
+    cleanup_essay_orphan_artifacts,
+    mark_terminal_essay_failure,
+)
 from modules.orders.domain import OrderStatus
 from modules.orders.models import Order
 from modules.presentations.models import Presentation
@@ -67,6 +84,11 @@ def _generation_retry_when(retries: int, exception: Exception) -> bool:
     if isinstance(exception, GenerationAttemptError):
         return exception.failures <= _settings.generation_max_retries
     return False
+
+
+def _cleanup_persistence_retry_when(retries: int, exception: Exception) -> bool:
+    del retries
+    return isinstance(exception, dramatiq.Retry)
 
 
 def _failure_progress_step(*, retries: int, max_retries: int) -> str:
@@ -367,6 +389,148 @@ def _run_paid_order_actor(order_id: int) -> None:
         raise RuntimeError("paid outline actor timed out") from exc
 
 
+async def _process_service_essay(service_order_id: int) -> None:
+    from aiogram import Bot
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    provider = None
+    try:
+        provider = build_ai_provider(settings)
+        storage = build_storage(settings)
+
+        async def convert_docx(source, output_dir, *, timeout_seconds):  # type: ignore[no-untyped-def]
+            converter = LibreOfficeConverter(
+                binary=settings.libreoffice_binary,
+                timeout_seconds=timeout_seconds,
+            )
+            return await converter.convert(source, output_dir / f"{source.stem}.pdf")
+
+        pipeline = EssayPipeline(
+            factory,
+            provider,
+            storage,
+            temp_root=settings.generation_work_root / "service-essays",
+            pdf_converter=convert_docx,
+        )
+        await pipeline.process(service_order_id)
+        token = settings.telegram_bot_token.get_secret_value()
+        if not token:
+            raise RuntimeError("Telegram bot token is required for essay delivery")
+        async with Bot(token=token) as bot:
+            await TelegramEssayDelivery(
+                storage=storage,
+                work_root=settings.generation_work_root / "service-essay-delivery",
+                max_upload_bytes=settings.max_upload_bytes,
+            ).deliver(factory, service_order_id=service_order_id, bot=bot)
+    finally:
+        if provider is not None:
+            await close_ai_provider(provider)
+        await engine.dispose()
+
+
+async def _finalize_service_essay(service_order_id: int) -> bool:
+    settings = get_settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    try:
+        if await mark_terminal_essay_delivery_failure(factory, service_order_id=service_order_id):
+            return True
+        return await mark_terminal_essay_failure(factory, order_id=service_order_id)
+    finally:
+        await engine.dispose()
+
+
+async def _cleanup_service_essay_artifacts(service_order_id: int) -> None:
+    settings = get_settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    storage = build_storage(settings)
+    try:
+        await cleanup_essay_orphan_artifacts(factory, storage, order_id=service_order_id)
+    finally:
+        await engine.dispose()
+
+
+async def _requeue_service_essay_cleanup(event_id: int, error: BaseException) -> None:
+    settings = get_settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session, session.begin():
+            event = await session.get(OutboxEvent, event_id, with_for_update=True)
+            if event is None or event.event_type != "service.essay.cleanup_requested":
+                raise LookupError("essay cleanup outbox event not found")
+            event.status = "PENDING"
+            event.attempts = 0
+            event.available_at = datetime.now(UTC) + timedelta(hours=1)
+            event.published_at = None
+            event.last_error = f"{type(error).__name__}: cleanup retry scheduled"[:2000]
+    finally:
+        await engine.dispose()
+
+
+def _run_service_essay_actor(service_order_id: int) -> None:
+    if _current_timeout_failures() > _settings.generation_max_retries:
+        try:
+            resolved = asyncio.run(_finalize_service_essay(service_order_id))
+        except Exception:
+            logger.exception(
+                "timed-out essay finalization failed service_order_id=%s",
+                service_order_id,
+            )
+            resolved = False
+        if resolved:
+            return
+        raise dramatiq.Retry(  # type: ignore[no-untyped-call]
+            "waiting for timed-out essay lease recovery",
+            delay=_TIMEOUT_RETRY_DELAY_MS,
+        )
+    try:
+        asyncio.run(_process_service_essay(service_order_id))
+    except EssayDeliveryAmbiguousPersistencePending as exc:
+        raise dramatiq.Retry(  # type: ignore[no-untyped-call]
+            "waiting to persist ambiguous essay delivery",
+            delay=_TIMEOUT_RETRY_DELAY_MS,
+        ) from exc
+    except EssayDeliveryAmbiguous:
+        logger.warning(
+            "essay delivery acceptance ambiguous; automatic resend disabled service_order_id=%s",
+            service_order_id,
+        )
+        return
+    except (EssayLeaseBusy, EssayDeliveryInProgress, EssayDeliveryLeaseLost) as exc:
+        retry_after_ms = max(1_000, int(getattr(exc, "retry_after_ms", 60_000)))
+        raise dramatiq.Retry(  # type: ignore[no-untyped-call]
+            "essay processing lease is active",
+            delay=retry_after_ms,
+        ) from exc
+    except EssayTerminalError:
+        return
+    except TimeLimitExceeded as exc:
+        _record_timeout_failure()
+        raise dramatiq.Retry(  # type: ignore[no-untyped-call]
+            "essay actor timed out; waiting for lease recovery",
+            delay=_TIMEOUT_RETRY_DELAY_MS,
+        ) from exc
+    except Exception as exc:
+        failures = _record_runtime_failure()
+        if failures > _settings.generation_max_retries:
+            try:
+                resolved = asyncio.run(_finalize_service_essay(service_order_id))
+            except Exception:
+                logger.exception("essay finalization failed service_order_id=%s", service_order_id)
+                resolved = False
+            if resolved:
+                return
+            raise dramatiq.Retry(  # type: ignore[no-untyped-call]
+                "waiting for essay terminal-state persistence",
+                delay=_TIMEOUT_RETRY_DELAY_MS,
+            ) from exc
+        raise GenerationAttemptError(failures=failures) from exc
+
+
 @dramatiq.actor(
     queue_name="generation",
     max_retries=_settings.generation_max_retries,
@@ -400,6 +564,43 @@ def generate_priority_presentation(presentation_id: int) -> None:
 )
 def process_paid_order(order_id: int) -> None:
     _run_paid_order_actor(order_id)
+
+
+@dramatiq.actor(
+    queue_name="generation",
+    max_retries=_settings.generation_max_retries,
+    retry_when=_generation_retry_when,
+    min_backoff=15_000,
+    max_backoff=300_000,
+    time_limit=600_000,
+)
+def generate_service_essay(service_order_id: int) -> None:
+    _run_service_essay_actor(service_order_id)
+
+
+def _run_service_essay_cleanup_actor(service_order_id: int, outbox_event_id: int) -> None:
+    try:
+        asyncio.run(_cleanup_service_essay_artifacts(service_order_id))
+    except (Exception, TimeLimitExceeded) as exc:
+        try:
+            asyncio.run(_requeue_service_essay_cleanup(outbox_event_id, exc))
+        except Exception as persistence_exc:
+            raise dramatiq.Retry(  # type: ignore[no-untyped-call]
+                "waiting to persist essay cleanup requeue",
+                delay=60_000,
+            ) from persistence_exc
+
+
+@dramatiq.actor(
+    queue_name="generation",
+    max_retries=10,
+    retry_when=_cleanup_persistence_retry_when,
+    min_backoff=60_000,
+    max_backoff=3_600_000,
+    time_limit=300_000,
+)
+def cleanup_service_essay_artifacts(service_order_id: int, outbox_event_id: int) -> None:
+    _run_service_essay_cleanup_actor(service_order_id, outbox_event_id)
 
 
 @dramatiq.actor(queue_name="health", max_retries=0, time_limit=10_000)

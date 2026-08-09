@@ -10,6 +10,13 @@ from modules.ai.contracts import (
     PresentationRequest,
 )
 
+from modules.ai.essay_contracts import (
+    EssayDocument,
+    EssayGenerationRequest,
+    EssaySection,
+    validate_essay_against_request,
+)
+
 _SECTION_TITLES = {
     "uz": (
         "Kirish",
@@ -124,3 +131,42 @@ class MockAIProvider:
                 )
             )
         return GeneratedContent(title=request.title, slides=slides)
+
+    async def generate_essay(self, request: EssayGenerationRequest) -> EssayDocument:
+        section_count = {"short": 2, "medium": 4, "long": 6}[request.length]
+        requirement = request.additional_requirements or "Maxsus qo‘shimcha talab berilmagan"
+        sections = [
+            EssaySection(
+                heading=f"Asosiy yo‘nalish {index}",
+                paragraphs=[
+                    (
+                        f"{request.topic} mavzusining {index}-yo‘nalishi nazariy tushunchalar, "
+                        "sabab-oqibat aloqalari va amaliy kontekst orqali yoritiladi. Ushbu tahlil "
+                        f"foydalanuvchi talabini ham hisobga oladi: {requirement}."
+                    ),
+                    (
+                        "Masalani baholashda umumiy da’volar tekshiriladigan dalillardan ajratiladi, "
+                        "cheklovlar ochiq ko‘rsatiladi va xulosalar mavzu doirasida ehtiyotkor tarzda "
+                        f"shakllantiriladi. Bu {index}-bo‘limning akademik izchilligini ta’minlaydi."
+                    ),
+                ],
+            )
+            for index in range(1, section_count + 1)
+        ]
+        document = EssayDocument(
+            title=request.topic if len(request.topic) >= 3 else f"{request.topic} referati",
+            language=request.language,
+            introduction=(
+                f"{request.topic} zamonaviy ilmiy va amaliy muhokamalarda dolzarb o‘rin tutadi. "
+                "Referat mavzuning asosiy tushunchalarini, rivojlanish omillarini va qo‘llash "
+                f"chegaralarini izchil tahlil qiladi. Qo‘shimcha yo‘nalish: {requirement}."
+            ),
+            sections=sections,
+            conclusion=(
+                f"{request.topic} bo‘yicha ko‘rib chiqilgan jihatlar nazariya va amaliyotning o‘zaro "
+                "bog‘liqligini ko‘rsatadi. Yakuniy baho dalillarni tekshirish, cheklovlarni tan olish "
+                "va mas’uliyatli qaror qabul qilish zarurligini ta’kidlaydi."
+            ),
+            references=[],
+        )
+        return validate_essay_against_request(document, request)

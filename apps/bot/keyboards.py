@@ -10,7 +10,7 @@ from aiogram.types import (
 )
 
 from apps.bot.localization import Localizer
-from modules.service_orders.catalog import SERVICE_CATALOG, FieldSpec
+from modules.service_orders.catalog import SERVICE_CATALOG, FieldSpec, ServiceType
 
 
 def main_menu_keyboard(
@@ -72,20 +72,52 @@ def service_field_keyboard(
         ]
         for index in range(0, len(field.options), 2)
     ]
+    if field.name == "requirements" and field.optional:
+        rows.extend(
+            [
+                [
+                    InlineKeyboardButton(
+                        text=localizer.text(language, "service.requirements.write"),
+                        callback_data=f"svw:{token}:{field_index}",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text=localizer.text(language, "service.requirements.skip"),
+                        callback_data=f"svk:{token}:{field_index}",
+                    )
+                ],
+            ]
+        )
     rows.extend(_service_token_navigation(token, language, localizer))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def service_confirmation_keyboard(
-    *, token: str, language: str, localizer: Localizer
+    *,
+    token: str,
+    language: str,
+    localizer: Localizer,
+    service_type: ServiceType | None = None,
 ) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
-                text=localizer.text(language, "service.submit"),
+                text=localizer.text(
+                    language,
+                    "service.essay.submit"
+                    if service_type is ServiceType.ESSAY
+                    else "service.submit",
+                ),
                 callback_data=f"svs:{token}",
             )
-        ]
+        ],
+        [
+            InlineKeyboardButton(
+                text=localizer.text(language, "service.edit"),
+                callback_data=f"sve:{token}",
+            )
+        ],
     ]
     rows.extend(_service_token_navigation(token, language, localizer))
     return InlineKeyboardMarkup(inline_keyboard=rows)

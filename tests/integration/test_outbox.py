@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import func, select
@@ -51,4 +52,43 @@ async def test_outbox_enqueue_is_idempotent_and_dispatches_once(tmp_path: Path) 
     assert count == 1
     assert event is not None and event.status == "PUBLISHED"
     assert published == [{"presentation_id": 15, "priority": 100}]
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_outbox_never_dies_during_broker_outage(tmp_path: Path) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'cleanup-outbox.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    service = OutboxService(max_attempts=2)
+
+    async with factory() as session, session.begin():
+        await service.enqueue(
+            session,
+            event_type="service.essay.cleanup_requested",
+            aggregate_type="service_order",
+            aggregate_id="51",
+            idempotency_key="service-essay-cleanup:51",
+            payload={"service_order_id": 51},
+        )
+
+    async def unavailable(_: OutboxEvent) -> None:
+        raise ConnectionError("broker unavailable")
+
+    for _ in range(5):
+        async with factory() as session, session.begin():
+            event = await session.scalar(select(OutboxEvent).with_for_update())
+            assert event is not None
+            event.available_at = datetime.now(UTC) - timedelta(seconds=1)
+        assert await service.dispatch_once(
+            factory,
+            publishers={"service.essay.cleanup_requested": unavailable},
+        )
+
+    async with factory() as session:
+        event = await session.scalar(select(OutboxEvent))
+    assert event is not None
+    assert event.status == "PENDING"
+    assert event.attempts == 5
     await engine.dispose()

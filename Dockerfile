@@ -21,7 +21,9 @@ RUN apt-get update \
         fontconfig \
         fonts-dejavu-core \
         fonts-liberation \
+        fonts-noto-core \
         libreoffice-impress \
+        libreoffice-writer \
         tini \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
