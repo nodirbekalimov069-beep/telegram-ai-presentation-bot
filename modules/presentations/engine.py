@@ -122,7 +122,8 @@ def build_engine_payload(
     )
     slides: list[dict[str, Any]] = []
     content_slides = content.get("slides", []) if isinstance(content, dict) else []
-    for index, item in enumerate(outline.get("slides", [])):
+    outline_slides = outline.get("slides", [])
+    for index, item in enumerate(outline_slides):
         expanded = content_slides[index] if index < len(content_slides) else {}
         if not isinstance(expanded, dict):
             expanded = {}
@@ -138,7 +139,15 @@ def build_engine_payload(
             and str(block.get("heading", "")).strip()
             and str(block.get("body", "")).strip()
         ]
+        inferred_role = (
+            "cover"
+            if index == 0
+            else "conclusion"
+            if index == len(outline_slides) - 1
+            else "content"
+        )
         slide: dict[str, Any] = {
+            "role": str(item.get("role") or inferred_role),
             "title": str(expanded.get("title") or item.get("title", "Untitled"))[:180],
             "bullets": (expanded_points or key_points)[:8],
             "sources": sources[:10],

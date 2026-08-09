@@ -101,6 +101,7 @@ class OutlineSlide(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
     number: int = Field(ge=1, le=30)
+    role: Literal["cover", "content", "conclusion"] | None = None
     title: str = Field(min_length=2, max_length=120)
     purpose: str = Field(min_length=2, max_length=300)
     key_points: list[SlideBullet] = Field(min_length=1, max_length=6)
@@ -180,7 +181,8 @@ _SYSTEM_INSTRUCTION = (
 ## OUTLINE GENERATION MODE
 Bu chaqiriq Telegram suhbat turni emas, tasdiqlashdan oldingi structured outline generatsiyasidir.
 Faqat quyidagi JSON obyektini qaytar: title va slides. Har bir slide uchun majburiy maydonlar:
-number, title, purpose, key_points (1-6), visual_type, layout, sources. Ixtiyoriy structured
+number, role, title, purpose, key_points (1-6), visual_type, layout, sources. Birinchi slayd
+role=`cover`, oxirgi slayd role=`conclusion`, qolganlari role=`content` bo'lsin. Ixtiyoriy structured
 maydonlar: chart, table, special_layout. Chart faqat tekshiriladigan manbada haqiqiy raqamlar
 bo'lsa ishlatilsin: {type: bar|line|pie, categories: [...], series: [{name, values: [...]}]}.
 Hech qachon raqam uydirma. Table: {headers: [...], rows: [[...]]}; har row kengligi headers

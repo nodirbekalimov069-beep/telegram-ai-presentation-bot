@@ -60,6 +60,7 @@ def test_engine_payload_prefers_expanded_content_over_outline_key_points() -> No
     )
 
     slide = payload["slides"][0]
+    assert slide["role"] == "cover"
     assert slide["bullets"] == [
         "Ta’rif — Tarixiy hikoya o‘tmishdagi voqealarni badiiy bayon orqali "
         "tushuntiradi va davr ruhini ochib beradi.",

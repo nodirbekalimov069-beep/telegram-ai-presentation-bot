@@ -136,3 +136,43 @@ test("renderer rejects vulnerable ICNS/JXL/HEIF parsers on direct calls", async 
     /unsupported image format/,
   );
 });
+
+test("explicit roles override position and chart-table renders both visuals", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "presentation-role-chart-table-"));
+  const output = path.join(dir, "deck.pptx");
+  const block = {
+    heading: "Dalil",
+    body: "Diagramma miqdoriy o‘zgarishni, jadval esa ayni ma’lumotning tekshiriladigan tafsilotlarini birga ko‘rsatadi."
+  };
+  const deck = {
+    title: "Role va kombinatsiya",
+    language: "uz",
+    theme,
+    plan_code: "PREMIUM_PLUS",
+    slides: [
+      { role: "content", title: "Kirish kontenti", bullets: ["A"], content_blocks: [block], sources: [] },
+      {
+        role: "content",
+        title: "Diagramma va jadval",
+        bullets: [],
+        content_blocks: [block],
+        chart: { type: "bar", categories: ["A", "B"], series: [{ name: "Qiymat", values: [2, 3] }] },
+        table: { headers: ["Mezon", "Qiymat"], rows: [["A", "2"], ["B", "3"]] },
+        sources: []
+      },
+      { role: "content", title: "Oddiy yakun", bullets: ["B"], content_blocks: [block], sources: [] }
+    ]
+  };
+
+  await renderPresentation(deck, output);
+  const zip = await JSZip.loadAsync(await readFile(output));
+  const first = await zip.file("ppt/slides/slide1.xml").async("string");
+  const second = await zip.file("ppt/slides/slide2.xml").async("string");
+  const secondRels = await zip.file("ppt/slides/_rels/slide2.xml.rels").async("string");
+  const third = await zip.file("ppt/slides/slide3.xml").async("string");
+  assert.doesNotMatch(first, /20 SLAYD/);
+  assert.match(first, /AKADEMIK\s+•\s+01/);
+  assert.match(second, /Mezon/);
+  assert.match(secondRels, /relationships\/chart/);
+  assert.doesNotMatch(third, /DALIL.*METOD.*NATIJA/s);
+});

@@ -699,7 +699,8 @@ function addTable(slide, table, theme, options = {}) {
   });
 }
 
-function addChart(slide, chart, theme) {
+function addChart(slide, chart, theme, options = {}) {
+  const { x = 5.12, y = 1.58, w = 7.53, h = 4.92 } = options;
   const chartType = { bar: "bar", line: "line", pie: "pie" }[chart.type];
   const data = chart.series.map((series) => ({
     name: series.name,
@@ -707,20 +708,20 @@ function addChart(slide, chart, theme) {
     values: series.values,
   }));
   slide.addShape("roundRect", {
-    x: 5.12,
-    y: 1.58,
-    w: 7.53,
-    h: 4.92,
+    x,
+    y,
+    w,
+    h,
     rectRadius: 0.07,
     fill: { color: theme.palette.surface },
     line: { color: theme.palette.pale, width: 1 },
     shadow: softShadow(),
   });
   slide.addChart(chartType, data, {
-    x: 5.48,
-    y: 1.95,
-    w: 6.85,
-    h: 4.2,
+    x: x + 0.36,
+    y: y + 0.37,
+    w: w - 0.68,
+    h: h - 0.72,
     showLegend: chart.series.length > 1,
     legendColor: theme.palette.foreground,
     legendFontFace: theme.typography.body,
@@ -1085,14 +1086,17 @@ export async function renderPresentation(input, outputPath) {
   for (const [index, content] of deck.slides.entries()) {
     const slide = pptx.addSlide();
     const editorialImages = curatedHistoricalImages(content, medical);
+    const explicitRole = content.role;
     const canBeCover =
-      index === 0 &&
+      (explicitRole === "cover" || (!explicitRole && index === 0)) &&
       !content.table &&
       !content.chart &&
       !content.layout &&
       !editorialImages.length;
     const isConclusion =
-      index === deck.slides.length - 1 && deck.slides.length > 2;
+      (explicitRole === "conclusion" ||
+        (!explicitRole && index === deck.slides.length - 1)) &&
+      deck.slides.length > 2;
 
     if (canBeCover) {
       addCover(slide, content, deck, theme, index, medical);
@@ -1104,6 +1108,22 @@ export async function renderPresentation(input, outputPath) {
       if (editorialImages.length) {
         addSideInsights(slide, content, theme);
         await addImages(slide, editorialImages, theme);
+      } else if (content.chart && content.table) {
+        addSideInsights(slide, content, theme);
+        addChart(slide, content.chart, theme, {
+          x: 5.12,
+          y: 1.58,
+          w: 7.53,
+          h: 2.55,
+        });
+        addTable(slide, content.table, theme, {
+          x: 5.12,
+          y: 4.33,
+          w: 7.53,
+          h: 2.12,
+          fontSize: 11.5,
+          rowH: 0.32,
+        });
       } else if (content.chart) {
         addSideInsights(slide, content, theme);
         addChart(slide, content.chart, theme);

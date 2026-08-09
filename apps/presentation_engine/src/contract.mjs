@@ -55,6 +55,7 @@ const layoutSchema = z.discriminatedUnion("type", [
 ]);
 
 const slideSchema = z.object({
+  role: z.enum(["cover", "content", "conclusion"]).optional(),
   title: nonEmpty.max(180),
   bullets: z.array(nonEmpty.max(600)).max(12),
   content_blocks: z.array(contentBlockSchema).min(1).max(4).optional(),
@@ -77,6 +78,9 @@ const slideSchema = z.object({
   }
   if (slide.table && slide.layout && slide.table.rows.length > 5) {
     context.addIssue({ code: "custom", path: ["table", "rows"], message: "table is limited to five data rows when sharing a slide with a layout" });
+  }
+  if (["cover", "conclusion"].includes(slide.role) && (slide.table || slide.chart || slide.layout || hasImages)) {
+    context.addIssue({ code: "custom", path: ["role"], message: `${slide.role} cannot carry a competing structured visual` });
   }
 });
 
