@@ -298,9 +298,7 @@ def validate_generated_content(
         if any(re.search(pattern, corpus) for pattern in spelling_errors):
             raise AIContractError("Uzbek spelling quality gate rejected non-literary forms")
         if any(
-            len(block.body) < 80
-            for slide in content.slides
-            for block in slide.body_blocks
+            len(block.body) < 80 for slide in content.slides for block in slide.body_blocks
         ) or any(len(slide.speaker_notes) < 160 for slide in content.slides):
             raise AIContractError("generated content lacks required explanatory depth")
         generic_count = sum(

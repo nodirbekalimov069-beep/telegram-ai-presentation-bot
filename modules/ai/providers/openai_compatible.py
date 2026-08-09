@@ -189,11 +189,7 @@ class OpenAICompatibleProvider:
         generated_slides = []
         for start in range(0, len(raw_slides), _CONTENT_BATCH_SIZE):
             batch = raw_slides[start : start + _CONTENT_BATCH_SIZE]
-            numbers = [
-                int(slide.get("number", 0))
-                for slide in batch
-                if isinstance(slide, dict)
-            ]
+            numbers = [int(slide.get("number", 0)) for slide in batch if isinstance(slide, dict)]
             batch_outline = {
                 **request.outline,
                 "slides": batch,
