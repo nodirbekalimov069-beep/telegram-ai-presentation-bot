@@ -3,6 +3,7 @@
 import json
 import re
 from typing import Annotated, Literal, TypedDict
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -114,6 +115,15 @@ class OutlineSlide(BaseModel):
 
     @model_validator(mode="after")
     def structured_visuals_must_fit_together(self) -> "OutlineSlide":
+        valid_sources = [
+            source
+            for source in self.sources
+            if (parsed := urlparse(source)).scheme in {"http", "https"} and parsed.netloc
+        ]
+        if len(valid_sources) != len(self.sources):
+            raise ValueError("sources must be verifiable http/https URLs")
+        if self.chart is not None and not valid_sources:
+            raise ValueError("charts require at least one verifiable source URL")
         if self.special_layout is not None and self.chart is not None:
             raise ValueError("special layout cannot share a slide with a chart")
         if self.table is not None and self.chart is not None and len(self.table.rows) > 5:
@@ -183,7 +193,8 @@ Bu chaqiriq Telegram suhbat turni emas, tasdiqlashdan oldingi structured outline
 Faqat quyidagi JSON obyektini qaytar: title va slides. Har bir slide uchun majburiy maydonlar:
 number, role, title, purpose, key_points (1-6), visual_type, layout, sources. Birinchi slayd
 role=`cover`, oxirgi slayd role=`conclusion`, qolganlari role=`content` bo'lsin. Ixtiyoriy structured
-maydonlar: chart, table, special_layout. Chart faqat tekshiriladigan manbada haqiqiy raqamlar
+maydonlar: chart, table, special_layout. `sources` ichida faqat real, tekshiriladigan http/https
+URL bo'lsin; "Biologiya darsliklari" kabi generic nomni source deb yozma. Chart faqat source URLdagi haqiqiy raqamlar
 bo'lsa ishlatilsin: {type: bar|line|pie, categories: [...], series: [{name, values: [...]}]}.
 Hech qachon raqam uydirma. Table: {headers: [...], rows: [[...]]}; har row kengligi headers
 bilan teng. special_layout timeline/process uchun {type, items: [{label, description}]}, SWOT
@@ -225,7 +236,9 @@ uchun manbashunoslik, kontekst, muallif pozitsiyasi, sabab-oqibat va verifikatsi
 tushunchalarni aniq ishlat. Mavzu tarixiy bo'lsa, deck bo'ylab kamida uchta nomlangan, ishonchli
 case-study (asar, shaxs, voqea yoki arxiv amaliyoti) kirit; "misol" yoki "tahlil" nomli slayd real
 nomlangan misolsiz qolmasin. O'zbekcha matnda adabiy lotin imlosidan foydalan: "hikoya", "yetkazadi",
-"o‘tmish"; user yoki outline'dagi xatoni ko'chirma. Sarlavhalarni Har Bir So'zni Katta Harf Bilan
+"o‘tmish"; ilmiy matnda "kraxmal", "saxaroza", "glyukoza", "kislorod", "funksional"
+shakllaridan foydalan; "kraxin", "sakkaroz", "glukoza", "kislorat", "funktsional" yozma.
+User yoki outline'dagi xatoni ko'chirma. Sarlavhalarni Har Bir So'zni Katta Harf Bilan
 emas, o'zbekcha sentence case bilan yoz. Speaker notes body'ni takrorlamasin: dalil chegarasi,
 o'qituvchi izohi va keyingi slaydga o'tishni qo'shsin. Har body kamida 80 belgi, speaker_notes kamida
 160 belgi bo'lsin. Markdown, AgentReply yoki tashqi matn qaytarma.
@@ -273,7 +286,16 @@ def validate_generated_content(
                 ),
             ]
         ).casefold()
-        if re.search(r"\bxikoya", corpus) or re.search(r"\betkaz", corpus):
+        spelling_errors = (
+            r"\bxikoya",
+            r"\betkaz",
+            r"\bkraxin\b",
+            r"\bsakkaroz\b",
+            r"\bglukoza\b",
+            r"\bkislorat\w*",
+            r"\bfunktsional\w*",
+        )
+        if any(re.search(pattern, corpus) for pattern in spelling_errors):
             raise AIContractError("Uzbek spelling quality gate rejected non-literary forms")
         if any(
             len(block.body) < 80

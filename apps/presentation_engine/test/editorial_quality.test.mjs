@@ -176,3 +176,32 @@ test("explicit roles override position and chart-table renders both visuals", as
   assert.match(secondRels, /relationships\/chart/);
   assert.doesNotMatch(third, /DALIL.*METOD.*NATIJA/s);
 });
+
+test("biochemistry decks use a molecular science motif instead of archival papers", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "presentation-biochemistry-"));
+  const output = path.join(dir, "deck.pptx");
+  const block = {
+    heading: "Glyukoza",
+    body: "Glyukoza hujayra nafas olishida ATP hosil bo‘lishiga xizmat qiladigan asosiy monosaxaridlardan biridir."
+  };
+  const deck = {
+    title: "Uglevodlar biokimyosi",
+    language: "uz",
+    theme,
+    plan_code: "PREMIUM_PLUS",
+    slides: [
+      { role: "cover", title: "Uglevodlar", bullets: ["Tuzilish"], content_blocks: [block], sources: [] },
+      { role: "content", title: "Glyukozaning tuzilishi", bullets: [], content_blocks: [block, { ...block, heading: "Energiya" }], sources: [] },
+      { role: "conclusion", title: "Xulosa", bullets: ["Natija"], content_blocks: [block], sources: [] }
+    ]
+  };
+
+  await renderPresentation(deck, output);
+  const zip = await JSZip.loadAsync(await readFile(output));
+  const cover = await zip.file("ppt/slides/slide1.xml").async("string");
+  const content = await zip.file("ppt/slides/slide2.xml").async("string");
+  assert.match(cover, /BIOKIMYO TAQDIMOT/);
+  assert.match(cover, /C₆H₁₂O₆/);
+  assert.match(content, /BIOKIMYO/);
+  assert.doesNotMatch(content, /MANBA.*TALQIN.*NARRATIV/s);
+});

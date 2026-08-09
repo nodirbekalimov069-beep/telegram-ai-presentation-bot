@@ -246,3 +246,30 @@ def test_outline_schema_uses_openai_supported_strict_subset() -> None:
                 walk(value)
 
     walk(schema)
+
+
+def test_chart_requires_a_verifiable_http_source() -> None:
+    raw = json.dumps(
+        {
+            "title": "Uglevodlar",
+            "slides": [
+                {
+                    "number": 1,
+                    "title": "Biologik vazifalar",
+                    "purpose": "Dalilga asoslangan chart",
+                    "key_points": ["Energiya"],
+                    "visual_type": "chart",
+                    "layout": "chart",
+                    "sources": ["Biologiya darsliklari"],
+                    "chart": {
+                        "type": "pie",
+                        "categories": ["Energiya", "Tuzilish"],
+                        "series": [{"name": "Ulush", "values": [60, 40]}],
+                    },
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(AIContractError, match="invalid outline contract"):
+        parse_outline(raw, expected_slide_count=1)

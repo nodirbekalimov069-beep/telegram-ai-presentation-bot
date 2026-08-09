@@ -98,6 +98,11 @@ function isMedicalDeck(deck) {
   );
 }
 
+function isScienceDeck(deck) {
+  const corpus = [deck.title, ...deck.slides.map((slide) => slide.title)].join(" ");
+  return /uglevod|glyuk|glukoz|biokim|biolog|kimyo|ferment|metabol|hujayra|polisaxarid|monosaxarid|carbohyd|enzyme|protein|lipid/i.test(corpus);
+}
+
 function visualTheme(deck) {
   if (!isMedicalDeck(deck)) {
     return {
@@ -340,6 +345,65 @@ function addHistoricalArchiveVisual(
   });
 }
 
+function addScienceMoleculeVisual(slide, theme, x, y, scale = 1) {
+  slide.addShape("roundRect", {
+    x, y, w: 4.45 * scale, h: 4.1 * scale,
+    rectRadius: 0.06,
+    fill: { color: theme.palette.dark },
+    line: { color: theme.palette.dark },
+  });
+  const centerX = x + 1.75 * scale;
+  const centerY = y + 1.92 * scale;
+  const radius = 1.12 * scale;
+  const points = Array.from({ length: 6 }, (_, index) => {
+    const angle = (-90 + index * 60) * Math.PI / 180;
+    return [centerX + Math.cos(angle) * radius, centerY + Math.sin(angle) * radius];
+  });
+  points.forEach(([px, py], index) => {
+    const [nx, ny] = points[(index + 1) % points.length];
+    slide.addShape("line", {
+      x: px, y: py, w: nx - px, h: ny - py,
+      line: { color: "8ED8D1", width: 2.4 },
+    });
+  });
+  points.forEach(([px, py], index) => {
+    slide.addShape("ellipse", {
+      x: px - 0.18 * scale,
+      y: py - 0.18 * scale,
+      w: 0.36 * scale,
+      h: 0.36 * scale,
+      fill: { color: index === 0 ? theme.palette.accent : theme.palette.primary },
+      line: { color: "D8F3F0", width: 1.2 },
+    });
+  });
+  slide.addText("C₆H₁₂O₆", {
+    x: centerX - 0.72 * scale,
+    y: centerY - 0.18 * scale,
+    w: 1.44 * scale,
+    h: 0.36 * scale,
+    align: "center",
+    fontFace: theme.typography.heading,
+    fontSize: 18 * scale,
+    bold: true,
+    color: "FFFFFF",
+    margin: 0,
+  });
+  ["TUZILISH", "ENERGIYA", "ALMASHINUV"].forEach((label, index) => {
+    slide.addText(label, {
+      x: x + 3.05 * scale,
+      y: y + (0.72 + index * 0.9) * scale,
+      w: 1.2 * scale,
+      h: 0.22 * scale,
+      fontFace: theme.typography.body,
+      fontSize: 9.5 * scale,
+      bold: true,
+      charSpacing: 1.1,
+      color: index === 2 ? "FFFFFF" : "9FDDD7",
+      margin: 0,
+    });
+  });
+}
+
 function contentBlocksFor(content) {
   if (content.content_blocks?.length) return content.content_blocks;
   return content.bullets.map((text) => {
@@ -364,7 +428,7 @@ function curatedHistoricalImages(content, medical) {
   return [];
 }
 
-function addCover(slide, content, deck, theme, index, medical) {
+function addCover(slide, content, deck, theme, index, medical, science) {
   slide.background = { color: theme.palette.dark };
   slide.addShape("ellipse", {
     x: -1.25,
@@ -374,7 +438,7 @@ function addCover(slide, content, deck, theme, index, medical) {
     fill: { color: theme.palette.primary },
     line: { color: theme.palette.primary },
   });
-  slide.addText(medical ? "TIBBIY TAQDIMOT" : "AKADEMIK TAQDIMOT", {
+  slide.addText(medical ? "TIBBIY TAQDIMOT" : science ? "BIOKIMYO TAQDIMOT" : "AKADEMIK TAQDIMOT", {
     x: 0.82,
     y: 1.1,
     w: 4.2,
@@ -424,7 +488,8 @@ function addCover(slide, content, deck, theme, index, medical) {
     fill: { color: theme.palette.accent },
     line: { color: theme.palette.accent },
   });
-  slide.addText(`${deck.slides.length} SLAYD  •  AKADEMIK`, {
+  const coverBadge = medical ? "TIBBIY" : science ? "BIOKIMYO" : "AKADEMIK";
+  slide.addText(`${deck.slides.length} SLAYD  •  ${coverBadge}`, {
     x: 1.02,
     y: 5.72,
     w: 2.75,
@@ -439,6 +504,8 @@ function addCover(slide, content, deck, theme, index, medical) {
   });
   if (medical) {
     addVisualCluster(slide, theme, 8.25, 1.05, 1.05, true);
+  } else if (science) {
+    addScienceMoleculeVisual(slide, theme, 8.25, 1.2, 1.02);
   } else {
     addHistoricalArchiveVisual(slide, theme, 8.25, 1.2, 1.02);
   }
@@ -520,7 +587,7 @@ function addCardGrid(slide, blocks, theme) {
   });
 }
 
-function addSplitLayout(slide, blocks, theme, medical, mode = "editorial-split") {
+function addSplitLayout(slide, blocks, theme, medical, science, mode = "editorial-split") {
   const panelX = 7.78;
   const labels = mode === "case-study"
     ? ["DALIL", "KONTEKST", "XULOSA"]
@@ -536,6 +603,8 @@ function addSplitLayout(slide, blocks, theme, medical, mode = "editorial-split")
       line: { color: theme.palette.dark },
     });
     addVisualCluster(slide, theme, panelX + 0.3, 1.72, 0.82, true);
+  } else if (science) {
+    addScienceMoleculeVisual(slide, theme, panelX + 0.18, 1.72, 1.02);
   } else {
     addHistoricalArchiveVisual(slide, theme, panelX + 0.18, 1.72, 1.02, labels);
   }
@@ -981,7 +1050,7 @@ async function addImages(slide, imagePaths, theme) {
   });
 }
 
-function addConclusion(slide, content, deck, theme, index, medical) {
+function addConclusion(slide, content, deck, theme, index, medical, science) {
   slide.background = { color: theme.palette.dark };
   slide.addText("YAKUNIY XULOSA", {
     x: MARGIN,
@@ -1043,6 +1112,8 @@ function addConclusion(slide, content, deck, theme, index, medical) {
   });
   if (medical) {
     addVisualCluster(slide, theme, 8.55, 1.3, 0.92, true);
+  } else if (science) {
+    addScienceMoleculeVisual(slide, theme, 8.2, 1.45, 0.95);
   } else {
     addHistoricalArchiveVisual(
       slide,
@@ -1069,7 +1140,8 @@ export async function renderPresentation(input, outputPath) {
   const deck = validatePresentation(input);
   assertFits(deck);
   const medical = isMedicalDeck(deck);
-  const sectionLabel = medical ? "ONKOLOGIYA" : "AKADEMIK";
+  const science = !medical && isScienceDeck(deck);
+  const sectionLabel = medical ? "ONKOLOGIYA" : science ? "BIOKIMYO" : "AKADEMIK";
   const theme = visualTheme(deck);
   const pptx = new PptxGenJS();
   pptx.layout = "LAYOUT_WIDE";
@@ -1099,9 +1171,9 @@ export async function renderPresentation(input, outputPath) {
       deck.slides.length > 2;
 
     if (canBeCover) {
-      addCover(slide, content, deck, theme, index, medical);
+      addCover(slide, content, deck, theme, index, medical, science);
     } else if (isConclusion) {
-      addConclusion(slide, content, deck, theme, index, medical);
+      addConclusion(slide, content, deck, theme, index, medical, science);
     } else {
       slide.background = { color: theme.palette.background };
       addHeader(slide, content.title, theme, index, sectionLabel);
@@ -1157,7 +1229,7 @@ export async function renderPresentation(input, outputPath) {
         } else if (editorialLayout === "process") {
           addProcessFromBlocks(slide, blocks, theme);
         } else {
-          addSplitLayout(slide, blocks, theme, medical, editorialLayout);
+          addSplitLayout(slide, blocks, theme, medical, science, editorialLayout);
         }
       }
       addFooter(slide, index, deck.slides.length, theme);

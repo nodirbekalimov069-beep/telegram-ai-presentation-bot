@@ -137,6 +137,35 @@ def test_uzbek_content_quality_rejects_known_spelling_and_generic_copy() -> None
         validate_generated_content(content, expected_slide_count=1, language="uz")
 
 
+@pytest.mark.parametrize("bad_word", ["Kraxin", "Sakkaroz", "glukoza", "kislorat", "funktsional"])
+def test_uzbek_science_content_rejects_known_terminology_errors(bad_word: str) -> None:
+    content = GeneratedContent.model_validate(
+        {
+            "title": "Uglevodlar",
+            "slides": [
+                {
+                    "number": 1,
+                    "title": "Ilmiy mazmun",
+                    "body_blocks": [
+                        {
+                            "heading": "Atama",
+                            "body": f"{bad_word} uglevodlar mavzusida ishlatilgan noto‘g‘ri termin bo‘lib, ilmiy matnda bu shakl qabul qilinmasligi kerak.",
+                        },
+                        {
+                            "heading": "Tekshiruv",
+                            "body": "Biokimyo terminlari adabiy o‘zbekcha va xalqaro ilmiy nomenklaturaga mos ravishda yozilishi shart.",
+                        },
+                    ],
+                    "speaker_notes": "Ushbu qayd terminologik xatolar avtomatik quality gate orqali aniqlanishini tekshiradi va noto‘g‘ri ilmiy mazmunning yakuniy slaydga chiqishiga yo‘l qo‘ymaydi. Natija qayta generatsiyani majburiy boshlashi kerak.",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(AIContractError, match="Uzbek spelling"):
+        validate_generated_content(content, expected_slide_count=1, language="uz")
+
+
 @pytest.mark.asyncio
 async def test_mock_provider_expands_outline_into_explanatory_content() -> None:
     request = ContentGenerationRequest(
