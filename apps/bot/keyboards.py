@@ -10,6 +10,7 @@ from aiogram.types import (
 )
 
 from apps.bot.localization import Localizer
+from modules.service_orders.catalog import SERVICE_CATALOG, FieldSpec
 
 
 def main_menu_keyboard(
@@ -20,8 +21,8 @@ def main_menu_keyboard(
 ) -> ReplyKeyboardMarkup:
     labels = [
         [localizer.text(language, "menu.new")],
-        [localizer.text(language, "menu.mine"), localizer.text(language, "menu.plans")],
-        [localizer.text(language, "menu.free_demo"), localizer.text(language, "menu.profile")],
+        [localizer.text(language, "menu.ai_services"), localizer.text(language, "menu.mine")],
+        [localizer.text(language, "menu.plans"), localizer.text(language, "menu.free_demo")],
         [localizer.text(language, "menu.help"), localizer.text(language, "menu.settings")],
     ]
     if is_admin:
@@ -33,14 +34,101 @@ def main_menu_keyboard(
     )
 
 
-def language_keyboard() -> InlineKeyboardMarkup:
+def ai_services_keyboard(language: str, localizer: Localizer | None = None) -> InlineKeyboardMarkup:
+    localizer = localizer or Localizer.load_default()
+    buttons = [
+        InlineKeyboardButton(
+            text=f"{definition.icon} {localizer.text(language, definition.label_key)}",
+            callback_data=f"svc:{service_type.value}",
+        )
+        for service_type, definition in SERVICE_CATALOG.items()
+    ]
+    rows = [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=localizer.text(language, "common.main_menu"), callback_data="nav:home"
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def service_field_keyboard(
+    field: FieldSpec,
+    *,
+    token: str,
+    field_index: int,
+    language: str,
+    localizer: Localizer,
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=localizer.option_label(language, value),
+                callback_data=f"svp:{token}:{field_index}:{value}",
+            )
+            for value in field.options[index : index + 2]
+        ]
+        for index in range(0, len(field.options), 2)
+    ]
+    rows.extend(_service_token_navigation(token, language, localizer))
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def service_confirmation_keyboard(
+    *, token: str, language: str, localizer: Localizer
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=localizer.text(language, "service.submit"),
+                callback_data=f"svs:{token}",
+            )
+        ]
+    ]
+    rows.extend(_service_token_navigation(token, language, localizer))
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _service_token_navigation(
+    token: str, language: str, localizer: Localizer
+) -> list[list[InlineKeyboardButton]]:
+    return [
+        [
+            InlineKeyboardButton(
+                text=localizer.text(language, "common.back"), callback_data=f"svb:{token}"
+            ),
+            InlineKeyboardButton(
+                text=localizer.text(language, "common.main_menu"), callback_data="nav:home"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=localizer.text(language, "common.cancel"), callback_data=f"svx:{token}"
+            )
+        ],
+    ]
+
+
+def language_keyboard(
+    localizer: Localizer | None = None,
+    language: str = "uz",
+) -> InlineKeyboardMarkup:
+    localizer = localizer or Localizer.load_default()
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(text="O'zbekcha", callback_data="lang:uz"),
                 InlineKeyboardButton(text="Русский", callback_data="lang:ru"),
                 InlineKeyboardButton(text="English", callback_data="lang:en"),
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text=localizer.text(language, "common.main_menu"),
+                    callback_data="nav:home",
+                )
+            ],
         ]
     )
 

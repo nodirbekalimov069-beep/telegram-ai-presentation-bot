@@ -31,11 +31,29 @@ def main_menu_text(
     )
 
 
+async def find_user(session: AsyncSession, telegram_user_id: int) -> User | None:
+    user: User | None = await session.scalar(
+        select(User).where(User.telegram_user_id == telegram_user_id)
+    )
+    return user
+
+
 async def current_user(session: AsyncSession, telegram_user_id: int) -> User:
-    user = await session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))
+    user = await find_user(session, telegram_user_id)
     if user is None:
         raise LookupError("Telegram user is not registered")
     return user
+
+
+def preferred_language(
+    user: User | None,
+    telegram_language_code: str | None,
+    localizer: Localizer,
+) -> str:
+    """Resolve a supported UI language without exposing internal fallback details."""
+    candidate = user.selected_language if user is not None else (telegram_language_code or "")
+    normalized = candidate.lower().split("-", maxsplit=1)[0]
+    return normalized if normalized in localizer.languages else "uz"
 
 
 async def show_main_menu(

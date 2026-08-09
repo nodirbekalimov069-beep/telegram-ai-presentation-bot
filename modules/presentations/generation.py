@@ -306,6 +306,11 @@ class GenerationPipeline:
                             "purpose": str(order_settings.get("purpose") or "taqdimot uchun"),
                             "audience": str(order_settings.get("audience") or "umumiy auditoriya"),
                             "knowledge_level": knowledge_level,
+                            "additional_requirements": (
+                                str(order_settings["additional_requirements"]).strip()
+                                if order_settings.get("additional_requirements")
+                                else None
+                            ),
                             "outline": outline,
                         }
                     )

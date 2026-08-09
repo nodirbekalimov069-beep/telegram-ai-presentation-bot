@@ -63,6 +63,7 @@ _CANCELLABLE_INPUT_STATES = frozenset(
         PresentationFlow.knowledge_level.state,
         PresentationFlow.slide_count.state,
         PresentationFlow.design_style.state,
+        PresentationFlow.additional_requirements.state,
         PresentationFlow.plan.state,
     }
 )
@@ -188,7 +189,7 @@ async def back_flow(
         await state.set_state(PresentationFlow.language)
         await message.answer(
             localizer.text(language, "start.choose_language"),
-            reply_markup=language_keyboard(),
+            reply_markup=language_keyboard(localizer, language),
         )
         return
     back_steps = {
@@ -211,6 +212,11 @@ async def back_flow(
             ("8", "10", "12", "15", "18", "20", "25", "30"),
         ),
         PresentationFlow.plan.state: (
+            PresentationFlow.additional_requirements,
+            "create.requirements",
+            (),
+        ),
+        PresentationFlow.additional_requirements.state: (
             PresentationFlow.design_style,
             "create.design",
             DESIGN_STYLES,
@@ -328,7 +334,6 @@ async def _generate_outline_safely(
             await close_ai_provider(provider)
 
 
-@router.message(F.text.in_(labels("menu.new")))
 async def new_presentation(
     message: Message,
     state: FSMContext,
@@ -340,9 +345,10 @@ async def new_presentation(
     language = await _language(session, message.from_user.id)
     await state.clear()
     await state.set_state(PresentationFlow.language)
+    await message.answer(localizer.text(language, "create.steps"))
     await message.answer(
         localizer.text(language, "start.choose_language"),
-        reply_markup=language_keyboard(),
+        reply_markup=language_keyboard(localizer, language),
     )
 
 
@@ -466,6 +472,21 @@ async def design_style(message: Message, state: FSMContext, localizer: Localizer
         await message.answer(localizer.text(language, "create.design"))
         return
     await state.update_data(design_style=value)
+    await state.set_state(PresentationFlow.additional_requirements)
+    await message.answer(localizer.text(language, "create.requirements"))
+
+
+@router.message(PresentationFlow.additional_requirements)
+async def additional_requirements(
+    message: Message, state: FSMContext, localizer: Localizer
+) -> None:
+    data = await state.get_data()
+    language = str(data["language"])
+    value = (message.text or "").strip()
+    if not 1 <= len(value) <= 500:
+        await message.answer(localizer.text(language, "error.field_length", minimum=1, maximum=500))
+        return
+    await state.update_data(additional_requirements=value)
     await state.set_state(PresentationFlow.plan)
     await message.answer(
         localizer.text(language, "create.plan"),

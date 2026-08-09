@@ -75,6 +75,7 @@ async def test_outline_generation_and_approval_enqueue_one_job(tmp_path: Path) -
                 "knowledge_level": "beginner",
                 "slide_count": 15,
                 "design_style": "ai",
+                "additional_requirements": "Har slaydda bittadan amaliy ta’lim misoli bo‘lsin",
             },
         )
         session.add(order)
@@ -88,6 +89,9 @@ async def test_outline_generation_and_approval_enqueue_one_job(tmp_path: Path) -
 
     assert presentation.status == OrderStatus.WAITING_OUTLINE_APPROVAL
     assert len(presentation.outline["slides"]) == 15
+    assert provider.requests[0].additional_requirements == (
+        "Har slaydda bittadan amaliy ta’lim misoli bo‘lsin"
+    )
     first_outline = presentation.outline
 
     async with factory() as session, session.begin():

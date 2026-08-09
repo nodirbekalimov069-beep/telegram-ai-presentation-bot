@@ -7,6 +7,7 @@ from apps.bot.options import DESIGN_STYLES, KNOWLEDGE_LEVELS, PLAN_CODES
 
 REQUIRED_MENU_KEYS = {
     "menu.new",
+    "menu.ai_services",
     "menu.mine",
     "menu.plans",
     "menu.free_demo",
@@ -77,11 +78,28 @@ def test_presentation_fsm_contains_complete_input_and_approval_flow() -> None:
         "knowledge_level",
         "slide_count",
         "design_style",
+        "additional_requirements",
         "plan",
         "waiting_payment",
         "outline_review",
         "outline_edit",
     }
+
+
+def test_presentation_steps_copy_matches_actual_fsm_order() -> None:
+    localizer = Localizer.load_default()
+    assert localizer.text("uz", "create.steps").splitlines() == [
+        "1. Til",
+        "2. Yo‘nalish",
+        "3. Mavzu",
+        "4. Maqsad, auditoriya va bilim darajasi",
+        "5. Slayd soni",
+        "6. Dizayn/uslub",
+        "7. Qo‘shimcha talab",
+        "8. Tarif",
+        "9. Rejani tasdiqlash",
+        "10. Generatsiya",
+    ]
 
 
 def test_general_design_menu_does_not_offer_plan_locked_luxury_style() -> None:

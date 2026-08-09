@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from core.database.base import Base
 import core.database.models  # noqa: F401
+from modules.ai.contracts import ContentGenerationRequest, GeneratedContent
+from modules.ai.providers.mock import MockAIProvider
 from modules.files.storage import LocalStorage
 from modules.orders.domain import OrderStatus
 from modules.orders.models import Order
@@ -44,6 +46,15 @@ class FailingRenderer:
         raise RuntimeError("transient renderer failure")
 
 
+class RecordingContentProvider:
+    def __init__(self) -> None:
+        self.requests: list[ContentGenerationRequest] = []
+
+    async def generate_content(self, request: ContentGenerationRequest) -> GeneratedContent:
+        self.requests.append(request)
+        return await MockAIProvider().generate_content(request)
+
+
 @pytest.mark.asyncio
 async def test_generation_pipeline_creates_and_stores_both_artifacts(tmp_path: Path) -> None:
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'generation.db'}")
@@ -65,7 +76,13 @@ async def test_generation_pipeline_creates_and_stores_both_artifacts(tmp_path: P
             currency="UZS",
             status=OrderStatus.QUEUED,
             topic="AI va ta’lim",
-            settings={"slide_count": 2},
+            settings={
+                "slide_count": 2,
+                "purpose": "Talabalarga tushuntirish",
+                "audience": "Universitet talabalari",
+                "knowledge_level": "beginner",
+                "additional_requirements": "Har slaydda amaliy misol bo‘lsin",
+            },
         )
         session.add(order)
         await session.flush()
@@ -121,11 +138,13 @@ async def test_generation_pipeline_creates_and_stores_both_artifacts(tmp_path: P
 
     project_root = Path(__file__).resolve().parents[2]
     storage = LocalStorage(tmp_path / "storage")
+    content_provider = RecordingContentProvider()
     pipeline = GenerationPipeline(
         renderer=NodePresentationRenderer(project_root / "apps" / "presentation_engine"),
         pdf_converter=FakePdfConverter(),
         storage=storage,
         work_root=tmp_path / "work",
+        content_provider=content_provider,  # type: ignore[arg-type]
     )
     progress_updates: list[tuple[int, str]] = []
 
@@ -136,6 +155,9 @@ async def test_generation_pipeline_creates_and_stores_both_artifacts(tmp_path: P
         factory,
         presentation_id=presentation_id,
         progress_callback=record_progress,
+    )
+    assert content_provider.requests[0].additional_requirements == (
+        "Har slaydda amaliy misol bo‘lsin"
     )
 
     async with factory() as session:
@@ -158,6 +180,7 @@ async def test_generation_pipeline_creates_and_stores_both_artifacts(tmp_path: P
     assert saved.pdf_storage_key and await storage.exists(saved.pdf_storage_key)
     assert progress_updates == [
         (10, "content_and_design"),
+        (20, "generating_content"),
         (30, "rendering_pptx"),
         (60, "converting_pdf"),
         (90, "delivery_pending"),

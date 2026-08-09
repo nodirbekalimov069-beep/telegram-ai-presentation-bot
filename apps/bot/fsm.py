@@ -12,7 +12,15 @@ class PresentationFlow(StatesGroup):
     knowledge_level = State()
     slide_count = State()
     design_style = State()
+    additional_requirements = State()
     plan = State()
     waiting_payment = State()
     outline_review = State()
     outline_edit = State()
+
+
+class ServiceFlow(StatesGroup):
+    """One catalog-driven FSM shared by all non-presentation services."""
+
+    collecting = State()
+    confirming = State()

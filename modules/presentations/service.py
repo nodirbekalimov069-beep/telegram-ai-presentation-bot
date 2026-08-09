@@ -112,6 +112,11 @@ class PresentationService:
                     knowledge_level=request_knowledge_level,
                     slide_count=presentation.slide_count,
                     design_style=presentation.design_style,
+                    additional_requirements=(
+                        str(settings["additional_requirements"]).strip()
+                        if settings.get("additional_requirements")
+                        else None
+                    ),
                     revision_instructions=used_revision_instruction,
                     existing_outline=(
                         dict(presentation.outline)

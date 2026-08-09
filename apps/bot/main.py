@@ -12,7 +12,7 @@ from core.database.session import create_engine, create_session_factory
 from core.logging import configure_logging
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from apps.bot.handlers import menu, presentation, start
+from apps.bot.handlers import fallback, menu, navigation, presentation, services, start
 from apps.bot.localization import Localizer
 from apps.bot.middleware import DatabaseSessionMiddleware, OwnerOnlyMiddleware
 
@@ -61,7 +61,12 @@ def build_dispatcher(
     dispatcher["settings"] = settings
     dispatcher.include_router(start.router)
     dispatcher.include_router(menu.router)
+    # Top-level feature entries must precede state-specific catch-all handlers.
+    dispatcher.include_router(navigation.router)
+    dispatcher.include_router(services.router)
     dispatcher.include_router(presentation.router)
+    # Catch-all must stay last so valid callbacks reach their feature router.
+    dispatcher.include_router(fallback.router)
     return dispatcher
 
 

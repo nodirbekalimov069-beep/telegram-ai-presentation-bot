@@ -9,7 +9,6 @@ from modules.users.service import UserService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.bot.handlers.common import current_user, show_main_menu
-from apps.bot.keyboards import language_keyboard
 from apps.bot.localization import Localizer
 
 router = Router(name="start")
@@ -21,10 +20,11 @@ async def start(
     state: FSMContext,
     session: AsyncSession,
     localizer: Localizer,
+    settings: Settings,
 ) -> None:
     if message.from_user is None:
         return
-    await UserService().register(
+    user = await UserService().register(
         session,
         telegram_user_id=message.from_user.id,
         username=message.from_user.username,
@@ -33,10 +33,7 @@ async def start(
         language_code=message.from_user.language_code,
     )
     await state.clear()
-    await message.answer(
-        localizer.text("uz", "start.choose_language"),
-        reply_markup=language_keyboard(),
-    )
+    await show_main_menu(message, user=user, localizer=localizer, settings=settings)
 
 
 @router.callback_query(StateFilter(None), F.data.startswith("lang:"))

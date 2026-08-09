@@ -433,7 +433,7 @@ async def test_approve_outline_reuses_preview_as_durable_progress_message(
 
 
 @pytest.mark.asyncio
-async def test_design_style_moves_directly_to_plan_selection() -> None:
+async def test_design_style_moves_to_additional_requirements() -> None:
     message = SimpleNamespace(text="Zamonaviy", answer=AsyncMock())
     state = AsyncMock(spec=FSMContext)
     state.get_data.return_value = {"language": "uz"}
@@ -441,9 +441,9 @@ async def test_design_style_moves_directly_to_plan_selection() -> None:
     await presentation_handlers.design_style(message, state, Localizer.load_default())
 
     state.update_data.assert_awaited_once_with(design_style="modern")
-    state.set_state.assert_awaited_once_with(PresentationFlow.plan)
+    state.set_state.assert_awaited_once_with(PresentationFlow.additional_requirements)
     message.answer.assert_awaited_once()
-    assert message.answer.await_args.args[0] == "Tarifni tanlang:"
+    assert message.answer.await_args.args[0].startswith("Qo‘shimcha talabni")
 
 
 @pytest.mark.asyncio

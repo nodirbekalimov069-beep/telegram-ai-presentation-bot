@@ -22,6 +22,7 @@ def test_user_topic_is_isolated_from_system_instructions() -> None:
         knowledge_level="beginner",
         slide_count=8,
         design_style="technology",
+        additional_requirements="Har slaydda xavfsizlik misolini kiriting",
     )
 
     messages = build_openai_messages(request)
@@ -31,6 +32,7 @@ def test_user_topic_is_isolated_from_system_instructions() -> None:
     assert request.topic not in messages[0]["content"]
     payload = json.loads(messages[1]["content"])
     assert payload["topic"] == request.topic
+    assert payload["additional_requirements"] == "Har slaydda xavfsizlik misolini kiriting"
     assert messages[1]["role"] == "user"
 
 

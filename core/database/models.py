@@ -7,6 +7,7 @@ from modules.plans.models import Plan
 from modules.presentations.models import GenerationAttempt, GenerationJob, Presentation
 from modules.presentations.ratings import Rating
 from modules.promo_codes.models import PromoCode
+from modules.service_orders.models import ServiceOrder
 from modules.templates.models import Template
 from modules.users.models import FreeDemoClaim, User
 from core.outbox.models import OutboxEvent
@@ -27,6 +28,7 @@ __all__ = [
     "PromoCode",
     "PromptVersion",
     "Rating",
+    "ServiceOrder",
     "TelegramUpdateInbox",
     "Template",
     "User",

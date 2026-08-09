@@ -18,6 +18,7 @@ REQUIRED_TABLES = {
     "audit_logs",
     "bot_settings",
     "prompt_versions",
+    "service_orders",
 }
 
 

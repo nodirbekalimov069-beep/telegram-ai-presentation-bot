@@ -78,6 +78,7 @@ def test_content_generation_messages_use_a_separate_full_content_mode() -> None:
         purpose="ta'lim uchun",
         audience="oliy ta'lim",
         knowledge_level="advanced",
+        additional_requirements="Har slaydda manba cheklovini eslatib o‘ting",
         outline={"title": "Tarixiy hikoyalar", "slides": [{"number": 1}]},
     )
 
@@ -85,6 +86,7 @@ def test_content_generation_messages_use_a_separate_full_content_mode() -> None:
 
     assert "FULL CONTENT GENERATION MODE" in messages[0]["content"]
     assert '"audience":"oliy ta\'lim"' in messages[1]["content"]
+    assert "Har slaydda manba cheklovini eslatib o‘ting" in messages[1]["content"]
 
 
 def test_generated_content_requires_consecutive_slide_numbers() -> None:

@@ -1,6 +1,7 @@
 from apps.bot.handlers.common import main_menu_text
 from apps.bot.keyboards import choices_keyboard, main_menu_keyboard, resolve_choice
 from apps.bot.localization import Localizer
+from apps.bot.menu_labels import menu_labels
 from apps.bot.options import KNOWLEDGE_LEVELS, PLAN_CODES, directions_for
 
 
@@ -18,14 +19,26 @@ def test_main_menu_contains_required_actions_and_admin_is_conditional() -> None:
     assert localizer.text("uz", "menu.admin") in admin_labels
 
 
+def test_old_persistent_reply_keyboard_labels_remain_routable() -> None:
+    localizer = Localizer.load_default()
+    assert "🚀 Yangi prezentatsiya" in menu_labels(localizer, "menu.new")
+    assert "🚀 Новая презентация" in menu_labels(localizer, "menu.new")
+    assert "📂 My presentations" in menu_labels(localizer, "menu.mine")
+    assert "💎 Tariflar" in menu_labels(localizer, "menu.plans")
+    assert "🎁 Free Demo" in menu_labels(localizer, "menu.free_demo")
+
+
 def test_uzbek_owner_menu_uses_the_required_primary_labels() -> None:
     localizer = Localizer.load_default()
     keyboard = main_menu_keyboard(localizer, "uz", is_admin=False)
     labels = {button.text for row in keyboard.keyboard for button in row}
 
     assert {
-        "🚀 Yangi prezentatsiya",
-        "📂 Mening prezentatsiyalarim",
+        "🎨 Taqdimot yaratish",
+        "🤖 AI xizmatlar",
+        "📂 Mening buyurtmalarim",
+        "💰 Narxlar",
+        "🎁 Bepul sinab ko‘rish",
         "ℹ️ Yordam",
         "⚙️ Sozlamalar",
     } <= labels
@@ -39,8 +52,8 @@ def test_main_menu_has_a_clear_mobile_first_hierarchy() -> None:
 
     assert rows == [
         [localizer.text("uz", "menu.new")],
-        [localizer.text("uz", "menu.mine"), localizer.text("uz", "menu.plans")],
-        [localizer.text("uz", "menu.free_demo"), localizer.text("uz", "menu.profile")],
+        [localizer.text("uz", "menu.ai_services"), localizer.text("uz", "menu.mine")],
+        [localizer.text("uz", "menu.plans"), localizer.text("uz", "menu.free_demo")],
         [localizer.text("uz", "menu.help"), localizer.text("uz", "menu.settings")],
     ]
     assert keyboard.input_field_placeholder == localizer.text("uz", "menu.input_placeholder")

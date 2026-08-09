@@ -39,3 +39,8 @@ def test_dispatcher_builds_without_telegram_or_redis_network(tmp_path: Path) -> 
         if isinstance(middleware, FSMContextMiddleware)
     )
     assert owner_index < fsm_index < database_index
+    router_names = [router.name for router in dispatcher.sub_routers]
+    navigation_index = router_names.index("feature-navigation")
+    assert navigation_index < router_names.index("service-flow")
+    assert navigation_index < router_names.index("presentation-flow")
+    assert router_names[-1] == "fallback"
