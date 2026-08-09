@@ -27,8 +27,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 _SLIDE_COUNT_RE = re.compile(
-    r"(?<![0-9])(?P<count>[0-9]+)(?![0-9])\s*(?:[-–—]\s*)?(?:ta\s*)?"
-    r"(?:slayd(?:lar|li)?|sahifa(?:li)?|bet|pages?|slides?|слайд(?:ов|а|ы)?)\b",
+    r"(?<!\d)(?P<count>[0-9]+)(?!\d)\s*(?:[-–—]\s*)?(?:ta\s*)?"
+    r"(?:slayd(?:lar|li|lik)?|sahifa(?:li|dan\s+iborat)?|bet|pages?|slides?|слайд[а-яё]*)\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_SLIDE_COUNT_RE = re.compile(
+    r"(?<!\d)\d+(?!\d)\s*(?:[-–—]\s*)?(?:ta\s*)?"
+    r"(?=(?:slayd|sahifa|bet|pages?|slides?|слайд))",
     re.IGNORECASE,
 )
 _IMAGE_WORDS = ("rasm", "image", "photo", "foto", "картин", "изображ")
@@ -94,6 +99,8 @@ def parse_quick_request(text: str, *, language: str) -> QuickPresentationRequest
     if len(normalized) < 3:
         raise QuickPresentationRequestError("presentation request is too short")
     match = _SLIDE_COUNT_RE.search(normalized)
+    if match is None and _EXPLICIT_SLIDE_COUNT_RE.search(normalized):
+        raise QuickPresentationRequestError("slide count expression is not supported")
     raw_count = match.group("count") if match else "8"
     if len(raw_count) > 2:
         raise QuickPresentationRequestError("slide count must be between 1 and 30")

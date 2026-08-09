@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 import core.database.models  # noqa: F401
 from apps.bot.handlers import presentation as presentation_handlers
+from apps.bot.fsm import PresentationFlow
 from apps.bot.localization import Localizer
 from core.config import Settings
 from core.database.base import Base
@@ -99,5 +100,61 @@ async def test_mock_payment_handler_does_not_nest_session_transactions(
         assert saved is not None and saved.status == OrderStatus.PAID
         generate_outline.assert_awaited_once()
         send_outline.assert_awaited_once()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_waiting_payment_back_without_cached_language_does_not_nest_transactions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'payment-back-handler.db'}")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        await seed_default_plans(session)
+        user = await UserService().register(
+            session,
+            telegram_user_id=555,
+            username=None,
+            first_name="Owner",
+            last_name=None,
+            language_code="uz",
+        )
+    async with factory() as session:
+        order = await OrderService().create_paid_order(
+            session,
+            user_id=user.id,
+            plan_code="medium",
+            topic="AI va ta’lim",
+            settings={"slide_count": 10, "language": "uz"},
+        )
+        order_id = order.id
+
+    message = SimpleNamespace(from_user=SimpleNamespace(id=555), answer=AsyncMock())
+    state = AsyncMock(spec=FSMContext)
+    state.get_data.return_value = {"order_id": order_id}
+    state.get_state.return_value = PresentationFlow.waiting_payment.state
+
+    try:
+        async with factory() as session:
+            await presentation_handlers.back_flow(
+                message,
+                state,
+                session,
+                Localizer.load_default(),
+                Settings(app_env="test"),
+            )
+        async with factory() as session:
+            saved = await session.get(Order, order_id)
+
+        assert saved is not None and saved.status == OrderStatus.CANCELLED
+        state.set_data.assert_awaited_once_with({})
+        state.set_state.assert_awaited_once_with(PresentationFlow.plan)
+        state.clear.assert_not_awaited()
+        message.answer.assert_awaited_once()
+        assert message.answer.await_args.args[0] == "Tarifni tanlang:"
     finally:
         await engine.dispose()

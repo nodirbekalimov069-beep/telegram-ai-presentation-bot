@@ -89,6 +89,21 @@ test("accepts the database-backed MEDIUM plan code", async () => {
   assert.ok(zip.file("ppt/slides/slide1.xml"));
 });
 
+test("free demo watermark does not advertise an unrelated Telegram handle", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "presentation-engine-free-demo-"));
+  const output = path.join(dir, "free-demo.pptx");
+  const freeDemoDeck = structuredClone(validDeck);
+  freeDemoDeck.plan_code = "FREE_DEMO";
+  freeDemoDeck.slides = [freeDemoDeck.slides[0]];
+
+  await renderPresentation(freeDemoDeck, output);
+  const zip = await JSZip.loadAsync(await readFile(output));
+  const slideXml = await zip.file("ppt/slides/slide1.xml").async("string");
+  assert.doesNotMatch(slideXml, /@presentation_bot/);
+  assert.doesNotMatch(slideXml, /Created with/);
+  assert.match(slideXml, /<a:t>Telegram AI Presentation Bot<\/a:t>/);
+});
+
 test("rejects content that would require body text below 18pt", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "presentation-engine-overflow-"));
   const output = path.join(dir, "overflow.pptx");

@@ -172,6 +172,50 @@ async def test_stale_cancel_button_does_not_claim_an_active_job_was_cancelled(
 
 
 @pytest.mark.asyncio
+async def test_persistent_cancel_button_cancels_queued_presentation_from_idle_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    message = SimpleNamespace(from_user=SimpleNamespace(id=555), answer=AsyncMock())
+    state = AsyncMock(spec=FSMContext)
+    state.get_data.return_value = {"presentation_id": 7, "language": "uz"}
+    state.get_state.return_value = None
+    presentation_service = Mock(cancel_outline=AsyncMock(return_value=True))
+    order_service = Mock(cancel_waiting_payment=AsyncMock())
+    menu = AsyncMock()
+    session = AsyncMock(spec=AsyncSession)
+    monkeypatch.setattr(
+        presentation_handlers,
+        "PresentationService",
+        Mock(return_value=presentation_service),
+    )
+    monkeypatch.setattr(
+        presentation_handlers,
+        "OrderService",
+        Mock(return_value=order_service),
+    )
+    monkeypatch.setattr(
+        presentation_handlers,
+        "current_user",
+        AsyncMock(return_value=SimpleNamespace(id=9, selected_language="uz")),
+    )
+    monkeypatch.setattr(presentation_handlers, "show_main_menu", menu)
+
+    await presentation_handlers.cancel_flow(
+        message,
+        state,
+        session,
+        Localizer.load_default(),
+        Settings(app_env="test"),
+    )
+
+    presentation_service.cancel_outline.assert_awaited_once_with(session, presentation_id=7)
+    order_service.cancel_waiting_payment.assert_not_awaited()
+    state.clear.assert_awaited_once_with()
+    message.answer.assert_awaited_once_with("Jarayon bekor qilindi.")
+    menu.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_back_from_direction_returns_to_language_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -200,6 +244,116 @@ async def test_back_from_direction_returns_to_language_selection(
     assert message.answer.await_args.args[0] == "Выберите язык:"
     assert message.answer.await_args.kwargs["reply_markup"] is not None
     menu.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_back_from_waiting_payment_cancels_order_before_returning_to_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    message = SimpleNamespace(from_user=SimpleNamespace(id=555), answer=AsyncMock())
+    state = AsyncMock(spec=FSMContext)
+    state.get_data.return_value = {
+        "language": "uz",
+        "order_id": 8,
+        "topic": "AI",
+        "slide_count": 12,
+    }
+    state.get_state.return_value = PresentationFlow.waiting_payment.state
+    session = AsyncMock(spec=AsyncSession)
+    order_service = Mock(cancel_waiting_payment=AsyncMock(return_value=True))
+    menu = AsyncMock()
+    monkeypatch.setattr(
+        presentation_handlers,
+        "OrderService",
+        Mock(return_value=order_service),
+    )
+    monkeypatch.setattr(presentation_handlers, "show_main_menu", menu)
+
+    await presentation_handlers.back_flow(
+        message,
+        state,
+        session,
+        Localizer.load_default(),
+        Settings(app_env="test"),
+    )
+
+    order_service.cancel_waiting_payment.assert_awaited_once_with(
+        session,
+        order_id=8,
+        telegram_user_id=555,
+    )
+    state.set_data.assert_awaited_once_with({"language": "uz", "topic": "AI", "slide_count": 12})
+    state.set_state.assert_awaited_once_with(PresentationFlow.plan)
+    state.clear.assert_not_awaited()
+    message.answer.assert_awaited_once()
+    assert message.answer.await_args.args[0] == "Tarifni tanlang:"
+    assert message.answer.await_args.kwargs["reply_markup"] is not None
+    menu.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_back_from_waiting_payment_failure_preserves_fsm_and_reports_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    message = SimpleNamespace(from_user=SimpleNamespace(id=555), answer=AsyncMock())
+    state = AsyncMock(spec=FSMContext)
+    state.get_data.return_value = {"language": "uz", "order_id": 8}
+    state.get_state.return_value = PresentationFlow.waiting_payment.state
+    order_service = Mock(
+        cancel_waiting_payment=AsyncMock(side_effect=ValueError("payment is no longer cancellable"))
+    )
+    menu = AsyncMock()
+    monkeypatch.setattr(
+        presentation_handlers,
+        "OrderService",
+        Mock(return_value=order_service),
+    )
+    monkeypatch.setattr(presentation_handlers, "show_main_menu", menu)
+
+    await presentation_handlers.back_flow(
+        message,
+        state,
+        AsyncMock(spec=AsyncSession),
+        Localizer.load_default(),
+        Settings(app_env="test"),
+    )
+
+    state.set_data.assert_not_awaited()
+    state.set_state.assert_not_awaited()
+    state.clear.assert_not_awaited()
+    message.answer.assert_awaited_once_with(
+        "Jarayon allaqachon boshlangan yoki bu buyurtmani bekor qilib bo‘lmaydi."
+    )
+    menu.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_back_from_idle_queued_flow_preserves_presentation_cancel_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    message = SimpleNamespace(from_user=SimpleNamespace(id=555), answer=AsyncMock())
+    state = AsyncMock(spec=FSMContext)
+    state.get_data.return_value = {"presentation_id": 7, "language": "uz"}
+    state.get_state.return_value = None
+    menu = AsyncMock()
+    monkeypatch.setattr(
+        presentation_handlers,
+        "current_user",
+        AsyncMock(return_value=SimpleNamespace(id=9)),
+    )
+    monkeypatch.setattr(presentation_handlers, "show_main_menu", menu)
+
+    await presentation_handlers.back_flow(
+        message,
+        state,
+        AsyncMock(spec=AsyncSession),
+        Localizer.load_default(),
+        Settings(app_env="test"),
+    )
+
+    state.clear.assert_not_awaited()
+    state.set_data.assert_not_awaited()
+    menu.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -271,8 +425,9 @@ async def test_approve_outline_reuses_preview_as_durable_progress_message(
         progress_chat_id=555,
         progress_message_id=1234,
     )
-    state.clear.assert_awaited_once_with()
-    state.set_state.assert_not_awaited()
+    state.set_data.assert_awaited_once_with({"presentation_id": 7, "language": "uz"})
+    state.set_state.assert_awaited_once_with(None)
+    state.clear.assert_not_awaited()
     answer_callback.assert_awaited_once_with()
     assert events == ["database", "telegram"]
 

@@ -118,7 +118,8 @@ class MockAIProvider:
                     speaker_notes=(
                         f"Ushbu slaydda {title} mavzusini {request.knowledge_level} darajada "
                         f"tushuntiring. Asosiy tushunchalarni {request.audience} ehtiyojlari "
-                        "bilan bog‘lang va keyingi slaydga mantiqiy o‘tish yarating."
+                        "bilan bog‘lang, dalil chegarasini ko‘rsating va keyingi slaydga "
+                        "mantiqiy o‘tish yarating. Muhokama uchun bitta tekshiriladigan savol bering."
                     ),
                 )
             )

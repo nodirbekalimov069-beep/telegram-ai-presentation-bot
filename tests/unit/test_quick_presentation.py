@@ -41,6 +41,50 @@ def test_parse_quick_request_understands_russian_and_english_slide_words(
     assert parse_quick_request(text, language=language).slide_count == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "language", "expected"),
+    [
+        ("Menga 12 slaydlik taqdimot tayyorla", "uz", 12),
+        ("Сделай 12-слайдовую презентацию об ИИ", "ru", 12),
+    ],
+)
+def test_parse_quick_request_understands_productive_slide_morphology(
+    text: str,
+    language: str,
+    expected: int,
+) -> None:
+    assert parse_quick_request(text, language=language).slide_count == expected
+
+
+def test_parse_quick_request_applies_plan_gap_to_uzbek_page_phrase() -> None:
+    with pytest.raises(QuickPresentationRequestError, match="1–8 or 10–30"):
+        parse_quick_request(
+            "Menga 9 sahifadan iborat taqdimot tayyorla",
+            language="uz",
+        )
+
+
+def test_parse_quick_request_rejects_unrecognized_explicit_count_expression() -> None:
+    with pytest.raises(QuickPresentationRequestError, match="count expression"):
+        parse_quick_request(
+            "Menga 12 slayddan iborat taqdimot tayyorla",
+            language="uz",
+        )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Menga ١2 slayd tayyorla",
+        "Menga 2١ slayd tayyorla",
+        "Menga １２ slayd tayyorla",
+    ],
+)
+def test_parse_quick_request_rejects_non_ascii_decimal_slide_counts(text: str) -> None:
+    with pytest.raises(QuickPresentationRequestError, match="count expression"):
+        parse_quick_request(text, language="uz")
+
+
 def test_parse_quick_request_rejects_unpriced_nine_slide_gap() -> None:
     with pytest.raises(ValueError, match="1–8 or 10–30"):
         parse_quick_request("Menga 9 slayd tayyorla", language="uz")
