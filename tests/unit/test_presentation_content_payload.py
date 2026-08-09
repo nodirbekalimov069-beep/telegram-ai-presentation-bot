@@ -95,10 +95,10 @@ def test_generated_content_requires_consecutive_slide_numbers() -> None:
                     "number": 2,
                     "title": "Kirish",
                     "body_blocks": [
-                        {"heading": "Ta’rif", "body": "A" * 60},
-                        {"heading": "Ahamiyat", "body": "B" * 60},
+                        {"heading": "Ta’rif", "body": "A" * 80},
+                        {"heading": "Ahamiyat", "body": "B" * 80},
                     ],
-                    "speaker_notes": "C" * 80,
+                    "speaker_notes": "C" * 160,
                 }
             ],
         }
@@ -106,6 +106,34 @@ def test_generated_content_requires_consecutive_slide_numbers() -> None:
 
     with pytest.raises(AIContractError):
         validate_generated_content(content, expected_slide_count=1)
+
+
+def test_uzbek_content_quality_rejects_known_spelling_and_generic_copy() -> None:
+    content = GeneratedContent.model_validate(
+        {
+            "title": "Tarixiy Xikoyalar",
+            "slides": [
+                {
+                    "number": 1,
+                    "title": "Tarixiy Xikoyalarga Kirish",
+                    "body_blocks": [
+                        {
+                            "heading": "Ahamiyati",
+                            "body": "Tarixiy xikoyalar ma'lumotlarni etkazishda muhim rol o'ynaydi va jamiyat uchun foydali hisoblanadi.",
+                        },
+                        {
+                            "heading": "Ta'limdagi o'rni",
+                            "body": "Bu xikoyalar talabalar uchun muhim rol o'ynaydi va bilimlarni etkazishda yordam beradi.",
+                        },
+                    ],
+                    "speaker_notes": "Tarixiy xikoyalar juda muhim rol o'ynaydi. Ular ma'lumotlarni etkazadi va talabalar uchun foydali bo'ladi. Mazkur slaydni sodda tarzda tushuntiring. Keyingi qismda ayni umumiy fikrni yana takrorlang va yangi dalil qo'shmang.",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(AIContractError, match=r"Uzbek spelling|generic"):
+        validate_generated_content(content, expected_slide_count=1, language="uz")
 
 
 @pytest.mark.asyncio

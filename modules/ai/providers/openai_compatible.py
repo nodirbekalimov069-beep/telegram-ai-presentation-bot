@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 from collections.abc import Callable, Iterable
+from functools import partial
 from typing import TypeVar, cast
 
 from openai import (
@@ -36,6 +37,7 @@ from modules.ai.presentation_agent import (
 
 StructuredResponse = TypeVar("StructuredResponse", bound=BaseModel)
 _TRANSIENT_ERRORS = (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError)
+_CONTENT_BATCH_SIZE = 5
 logger = logging.getLogger(__name__)
 
 
@@ -156,7 +158,8 @@ class OpenAICompatibleProvider:
                                 "content": (
                                     "The previous response failed schema validation or "
                                     "request-specific contract validation. Return one corrected "
-                                    "JSON object matching every requested constraint."
+                                    "JSON object matching every requested constraint. Failure: "
+                                    f"{exc}"
                                 ),
                             },
                         )
@@ -181,17 +184,46 @@ class OpenAICompatibleProvider:
 
     async def generate_content(self, request: ContentGenerationRequest) -> GeneratedContent:
         raw_slides = request.outline.get("slides", [])
-        expected_slide_count = len(raw_slides) if isinstance(raw_slides, list) else 0
-        return await self._request_structured(
-            messages=cast(
-                Iterable[ChatCompletionMessageParam],
-                build_content_messages(request),
-            ),
-            response_format=GeneratedContent,
-            response_validator=lambda content: validate_generated_content(
-                content,
-                expected_slide_count=expected_slide_count,
-            ),
+        if not isinstance(raw_slides, list) or not raw_slides:
+            raise AIContractError("content generation requires at least one outline slide")
+        generated_slides = []
+        for start in range(0, len(raw_slides), _CONTENT_BATCH_SIZE):
+            batch = raw_slides[start : start + _CONTENT_BATCH_SIZE]
+            numbers = [
+                int(slide.get("number", 0))
+                for slide in batch
+                if isinstance(slide, dict)
+            ]
+            batch_outline = {
+                **request.outline,
+                "slides": batch,
+                "deck_slide_count": len(raw_slides),
+                "batch_range": [start + 1, start + len(batch)],
+            }
+            batch_request = request.model_copy(update={"outline": batch_outline})
+
+            validate_batch = partial(
+                validate_generated_content,
+                expected_slide_count=len(numbers),
+                language=request.language,
+                expected_slide_numbers=numbers,
+                enforce_repetition=False,
+            )
+
+            result = await self._request_structured(
+                messages=cast(
+                    Iterable[ChatCompletionMessageParam],
+                    build_content_messages(batch_request),
+                ),
+                response_format=GeneratedContent,
+                response_validator=validate_batch,
+            )
+            generated_slides.extend(result.slides)
+        combined = GeneratedContent(title=request.title, slides=generated_slides)
+        return validate_generated_content(
+            combined,
+            expected_slide_count=len(raw_slides),
+            language=request.language,
         )
 
     async def _request_json_object(

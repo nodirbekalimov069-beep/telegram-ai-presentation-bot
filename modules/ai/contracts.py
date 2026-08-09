@@ -1,6 +1,7 @@
 """Validated AI request and outline contracts."""
 
 import json
+import re
 from typing import Annotated, Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -148,7 +149,7 @@ class GeneratedContentBlock(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
     heading: str = Field(min_length=2, max_length=80)
-    body: str = Field(min_length=50, max_length=300)
+    body: str = Field(min_length=80, max_length=300)
 
 
 class GeneratedContentSlide(BaseModel):
@@ -157,7 +158,7 @@ class GeneratedContentSlide(BaseModel):
     number: int = Field(ge=1, le=30)
     title: str = Field(min_length=2, max_length=120)
     body_blocks: list[GeneratedContentBlock] = Field(min_length=2, max_length=4)
-    speaker_notes: str = Field(min_length=80, max_length=2_000)
+    speaker_notes: str = Field(min_length=160, max_length=2_000)
 
 
 class GeneratedContent(BaseModel):
@@ -216,7 +217,16 @@ o'qiladigan darajada ixcham bo'lsin; body 300 belgidan oshmasin. Birinchi slayd 
 ta'riflasin, oxirgi slayd esa mazmunli xulosa bersin. Tekshirilmagan aniq sana, raqam, foiz, iqtibos
 yoki manbani uydirma. Faktga ishonch bo'lmasa umumiy, akademik jihatdan ehtiyotkor ifoda ishlat.
 speaker_notes slayddagi matnni kengaytiradigan 2-5 gapdan iborat bo'lsin. Slaydlar soni va number
-outline bilan aynan teng bo'lsin. Markdown, AgentReply yoki tashqi matn qaytarma.
+outline bilan aynan teng bo'lsin. Har slaydning vazifasi boshqasidan farq qilsin; "muhim rol
+o'ynaydi", "yordam beradi", "samarali qiladi" kabi umumiy gaplarni takrorlama. Advanced auditoriya
+uchun manbashunoslik, kontekst, muallif pozitsiyasi, sabab-oqibat va verifikatsiya kabi akademik
+tushunchalarni aniq ishlat. Mavzu tarixiy bo'lsa, deck bo'ylab kamida uchta nomlangan, ishonchli
+case-study (asar, shaxs, voqea yoki arxiv amaliyoti) kirit; "misol" yoki "tahlil" nomli slayd real
+nomlangan misolsiz qolmasin. O'zbekcha matnda adabiy lotin imlosidan foydalan: "hikoya", "yetkazadi",
+"o‘tmish"; user yoki outline'dagi xatoni ko'chirma. Sarlavhalarni Har Bir So'zni Katta Harf Bilan
+emas, o'zbekcha sentence case bilan yoz. Speaker notes body'ni takrorlamasin: dalil chegarasi,
+o'qituvchi izohi va keyingi slaydga o'tishni qo'shsin. Har body kamida 80 belgi, speaker_notes kamida
+160 belgi bo'lsin. Markdown, AgentReply yoki tashqi matn qaytarma.
 """
 )
 
@@ -232,6 +242,9 @@ def validate_generated_content(
     content: GeneratedContent,
     *,
     expected_slide_count: int,
+    language: Literal["uz", "ru", "en"] | None = None,
+    expected_slide_numbers: list[int] | None = None,
+    enforce_repetition: bool = True,
 ) -> GeneratedContent:
     if len(content.slides) != expected_slide_count:
         raise AIContractError(
@@ -239,8 +252,39 @@ def validate_generated_content(
             f"{expected_slide_count}"
         )
     numbers = [slide.number for slide in content.slides]
-    if numbers != list(range(1, expected_slide_count + 1)):
+    expected_numbers = expected_slide_numbers or list(range(1, expected_slide_count + 1))
+    if numbers != expected_numbers:
         raise AIContractError("generated content slide numbers must be consecutive and one-based")
+    if language == "uz":
+        corpus = "\n".join(
+            [
+                content.title,
+                *(
+                    text
+                    for slide in content.slides
+                    for text in (
+                        slide.title,
+                        slide.speaker_notes,
+                        *(block.heading for block in slide.body_blocks),
+                        *(block.body for block in slide.body_blocks),
+                    )
+                ),
+            ]
+        ).casefold()
+        if re.search(r"\bxikoya", corpus) or re.search(r"\betkaz", corpus):
+            raise AIContractError("Uzbek spelling quality gate rejected non-literary forms")
+        if any(
+            len(block.body) < 80
+            for slide in content.slides
+            for block in slide.body_blocks
+        ) or any(len(slide.speaker_notes) < 160 for slide in content.slides):
+            raise AIContractError("generated content lacks required explanatory depth")
+        generic_count = sum(
+            corpus.count(phrase)
+            for phrase in ("muhim rol o'yn", "muhim rol o‘yn", "yordam beradi", "samarali qiladi")
+        )
+        if enforce_repetition and generic_count > max(2, expected_slide_count // 3):
+            raise AIContractError("generated content is too generic and repetitive")
     return content
 
 

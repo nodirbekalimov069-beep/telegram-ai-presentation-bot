@@ -38,6 +38,10 @@ const chartSchema = z.object({
 });
 
 const layoutItem = z.object({ label: nonEmpty.max(60), description: z.string().trim().max(180).optional() }).strict();
+const contentBlockSchema = z.object({
+  heading: nonEmpty.max(90),
+  body: nonEmpty.max(420)
+}).strict();
 const layoutSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("timeline"), items: z.array(layoutItem).min(2).max(6) }).strict(),
   z.object({ type: z.literal("process"), items: z.array(layoutItem).min(2).max(6) }).strict(),
@@ -53,6 +57,7 @@ const layoutSchema = z.discriminatedUnion("type", [
 const slideSchema = z.object({
   title: nonEmpty.max(180),
   bullets: z.array(nonEmpty.max(600)).max(12),
+  content_blocks: z.array(contentBlockSchema).min(1).max(4).optional(),
   table: tableSchema.optional(),
   chart: chartSchema.optional(),
   layout: layoutSchema.optional(),

@@ -1,5 +1,6 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import PptxGenJS from "pptxgenjs";
 
@@ -9,6 +10,10 @@ const SLIDE_W = 13.333;
 const SLIDE_H = 7.5;
 const MARGIN = 0.68;
 const BODY_PT = 18;
+const HISTORICAL_ASSET_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../assets/historical",
+);
 
 function estimateLines(text, charsPerLine) {
   return String(text)
@@ -32,16 +37,21 @@ function assertFits(deck) {
       Number(Boolean(slide.chart)) +
       Number(Boolean(slide.layout)) +
       Number(Boolean(slide.image_paths?.length));
-    const bulletWidth = competing ? 48 : 88;
-    const bulletLines = slide.bullets.reduce(
-      (sum, bullet) => sum + estimateLines(bullet, bulletWidth),
-      0,
-    );
-    const bulletCapacity = competing ? 10 : 18;
-    if (bulletLines > bulletCapacity) {
-      throw new Error(
-        `Text overflow on slide ${index + 1}: bullets cannot fit at ${BODY_PT}pt`,
+    if (!slide.layout) {
+      const bulletWidth = competing ? 48 : 88;
+      const visibleTexts = slide.content_blocks?.length
+        ? slide.content_blocks.flatMap((block) => [block.heading, block.body])
+        : slide.bullets;
+      const bulletLines = visibleTexts.reduce(
+        (sum, text) => sum + estimateLines(text, bulletWidth),
+        0,
       );
+      const bulletCapacity = competing ? 18 : 30;
+      if (bulletLines > bulletCapacity) {
+        throw new Error(
+          `Text overflow on slide ${index + 1}: visible content cannot fit readably`,
+        );
+      }
     }
     if (slide.table) {
       const cellLines = [
@@ -95,6 +105,15 @@ function visualTheme(deck) {
   };
 }
 
+export function selectEditorialLayout(content, index) {
+  const title = String(content.title || "").toLocaleLowerCase("uz");
+  if (/jarayon|bosqich|usul|saqlash|tarqatish|loyiha|innovats|raqamli/.test(title)) return "process";
+  if (/misol|case|tahlil|zafarnoma|temur|jadid/.test(title)) return "case-study";
+  if (/manba|arxiv|hujjat|ishonchl|tekshir|tadqiqot/.test(title)) return "source-map";
+  if (/farq|taqqos|haqiqat|mif|etika|turlari/.test(title)) return "comparison";
+  return index % 2 === 0 ? "editorial-split" : "cards";
+}
+
 function softShadow() {
   return {
     type: "outer",
@@ -108,7 +127,7 @@ function softShadow() {
 
 function addFooter(slide, index, total, theme, dark = false) {
   const color = dark ? "A9CFCC" : theme.palette.muted;
-  slide.addText("PRESENTATION AI", {
+  slide.addText("AKADEMIK TAQDIMOT", {
     x: MARGIN,
     y: 7.12,
     w: 2.4,
@@ -129,6 +148,26 @@ function addFooter(slide, index, total, theme, dark = false) {
     fontFace: theme.typography.body,
     fontSize: 10,
     color,
+    margin: 0,
+  });
+}
+
+function addSourceLine(slide, content, theme, dark = false) {
+  if (!content.sources?.length) return;
+  const labels = content.sources
+    .slice(0, 2)
+    .map((source) => source.label.replace(/^www\./, ""))
+    .join("  •  ");
+  slide.addText(`MANBA  •  ${labels}`, {
+    x: 3.35,
+    y: 7.12,
+    w: 5.8,
+    h: 0.18,
+    align: "center",
+    fontFace: theme.typography.body,
+    fontSize: 8.5,
+    charSpacing: 0.7,
+    color: dark ? "A9CFCC" : theme.palette.muted,
     margin: 0,
   });
 }
@@ -193,6 +232,116 @@ function addVisualCluster(slide, theme, x, y, scale = 1, medical = false) {
   }
 }
 
+function addHistoricalArchiveVisual(
+  slide,
+  theme,
+  x,
+  y,
+  scale = 1,
+  labels = ["MANBA", "TALQIN", "NARRATIV"],
+) {
+  slide.addShape("roundRect", {
+    x,
+    y,
+    w: 4.45 * scale,
+    h: 4.1 * scale,
+    rectRadius: 0.06,
+    fill: { color: theme.palette.dark },
+    line: { color: theme.palette.dark },
+  });
+  slide.addShape("rect", {
+    x: x + 0.5 * scale,
+    y: y + 0.55 * scale,
+    w: 2.25 * scale,
+    h: 2.65 * scale,
+    rotate: -5,
+    fill: { color: "F6E7CA" },
+    line: { color: theme.palette.secondary, width: 1.2 },
+  });
+  slide.addShape("rect", {
+    x: x + 0.75 * scale,
+    y: y + 0.38 * scale,
+    w: 2.25 * scale,
+    h: 2.65 * scale,
+    rotate: 3,
+    fill: { color: "FFF9ED" },
+    line: { color: theme.palette.accent, width: 1.2 },
+  });
+  for (let line = 0; line < 5; line += 1) {
+    slide.addShape("line", {
+      x: x + 1.02 * scale,
+      y: y + (0.92 + line * 0.34) * scale,
+      w: (line === 4 ? 1.15 : 1.52) * scale,
+      h: 0,
+      line: {
+        color: line === 0 ? theme.palette.accent : "9B8066",
+        width: line === 0 ? 2 : 1,
+      },
+    });
+  }
+  slide.addShape("ellipse", {
+    x: x + 2.45 * scale,
+    y: y + 2.38 * scale,
+    w: 0.64 * scale,
+    h: 0.64 * scale,
+    fill: { color: theme.palette.accent },
+    line: { color: "F6D9B7", width: 1.5 },
+  });
+  labels.forEach((label, index) => {
+    const labelY = y + (0.55 + index * 0.78) * scale;
+    slide.addText(label, {
+      x: x + 3.15 * scale,
+      y: labelY,
+      w: 1.05 * scale,
+      h: 0.22 * scale,
+      fontFace: theme.typography.body,
+      fontSize: 10.5 * scale,
+      bold: true,
+      charSpacing: 1.3,
+      color: index === 2 ? "FFFFFF" : "D9B78D",
+      margin: 0,
+    });
+    if (index < labels.length - 1) {
+      slide.addShape("line", {
+        x: x + 3.42 * scale,
+        y: labelY + 0.36 * scale,
+        w: 0,
+        h: 0.28 * scale,
+        line: {
+          color: theme.palette.secondary,
+          width: 1.5,
+          beginArrowType: "none",
+          endArrowType: "triangle",
+        },
+      });
+    }
+  });
+}
+
+function contentBlocksFor(content) {
+  if (content.content_blocks?.length) return content.content_blocks;
+  return content.bullets.map((text) => {
+    const [heading, ...rest] = String(text).split(/\s+[—–-]\s+/);
+    return {
+      heading: rest.length ? heading : String(text),
+      body: rest.length ? rest.join(" — ") : "",
+    };
+  });
+}
+
+function curatedHistoricalImages(content, medical) {
+  if (content.image_paths?.length) return content.image_paths;
+  if (medical) return [];
+  const title = String(content.title || "").toLocaleLowerCase("uz");
+  if (/zafarnoma/.test(title)) {
+    return [path.join(HISTORICAL_ASSET_ROOT, "zafarnama.jpg")];
+  }
+  if (/temuriy.*qo['’‘]?lyozma|qo['’‘]?lyozma.*temuriy/.test(title)) {
+    return [path.join(HISTORICAL_ASSET_ROOT, "timurid-quran.jpg")];
+  }
+  return [];
+}
+
 function addCover(slide, content, deck, theme, index, medical) {
   slide.background = { color: theme.palette.dark };
   slide.addShape("ellipse", {
@@ -228,7 +377,10 @@ function addCover(slide, content, deck, theme, index, medical) {
     fit: "shrink",
     valign: "mid",
   });
-  const subtitle = content.bullets.slice(0, 3).join("  •  ");
+  const subtitle = contentBlocksFor(content)
+    .slice(0, 3)
+    .map((block) => block.heading)
+    .join("  •  ");
   slide.addText(subtitle, {
     x: 0.86,
     y: 3.35,
@@ -263,11 +415,15 @@ function addCover(slide, content, deck, theme, index, medical) {
     color: "FFFFFF",
     margin: 0,
   });
-  addVisualCluster(slide, theme, 8.25, 1.05, 1.05, medical);
+  if (medical) {
+    addVisualCluster(slide, theme, 8.25, 1.05, 1.05, true);
+  } else {
+    addHistoricalArchiveVisual(slide, theme, 8.25, 1.2, 1.02);
+  }
   addFooter(slide, index, deck.slides.length, theme, true);
 }
 
-function addCard(slide, { x, y, w, h, number, text }, theme) {
+function addCard(slide, { x, y, w, h, number, block }, theme) {
   slide.addShape("roundRect", {
     x,
     y,
@@ -278,161 +434,200 @@ function addCard(slide, { x, y, w, h, number, text }, theme) {
     line: { color: theme.palette.pale, width: 1 },
     shadow: softShadow(),
   });
-  slide.addShape("ellipse", {
-    x: x + 0.25,
-    y: y + 0.25,
-    w: 0.5,
-    h: 0.5,
-    fill: { color: number % 3 === 0 ? theme.palette.accent : theme.palette.primary },
-    line: { color: number % 3 === 0 ? theme.palette.accent : theme.palette.primary },
-  });
   slide.addText(String(number).padStart(2, "0"), {
     x: x + 0.25,
-    y: y + 0.405,
+    y: y + 0.24,
     w: 0.5,
-    h: 0.14,
-    align: "center",
+    h: 0.22,
     fontFace: theme.typography.body,
-    fontSize: 9,
+    fontSize: 9.5,
     bold: true,
-    color: "FFFFFF",
+    charSpacing: 1.1,
+    color: number % 3 === 0 ? theme.palette.accent : theme.palette.primary,
     margin: 0,
   });
-  slide.addText(text, {
+  slide.addText(block.heading, {
     x: x + 0.25,
-    y: y + 0.98,
+    y: y + 0.62,
     w: w - 0.5,
-    h: h - 1.18,
-    fontFace: theme.typography.body,
-    fontSize: 17,
+    h: h > 3 ? 0.6 : 0.45,
+    fontFace: theme.typography.heading,
+    fontSize: h > 3 ? 19 : 16,
     bold: true,
     color: theme.palette.foreground,
     margin: 0,
-    valign: "top",
     fit: "shrink",
   });
+  if (block.body) {
+    slide.addText(block.body, {
+      x: x + 0.25,
+      y: y + (h > 3 ? 1.42 : 1.14),
+      w: w - 0.5,
+      h: h - (h > 3 ? 1.72 : 1.37),
+      fontFace: theme.typography.body,
+      fontSize: h > 3 ? 15.5 : 13.5,
+      color: theme.palette.muted,
+      margin: 0,
+      valign: "top",
+      fit: "shrink",
+      breakLine: false,
+    });
+  }
 }
 
-function addCardGrid(slide, bullets, theme) {
-  const items = bullets.slice(0, 6);
-  const columns = items.length <= 3 ? items.length : 3;
+function addCardGrid(slide, blocks, theme) {
+  const items = blocks.slice(0, 4);
+  const columns = items.length === 4 ? 2 : Math.min(3, items.length);
   const rows = Math.ceil(items.length / columns);
   const gap = 0.28;
   const w = (SLIDE_W - MARGIN * 2 - gap * (columns - 1)) / columns;
-  const h = rows === 1 ? 3.55 : 2.15;
-  items.forEach((text, index) => {
+  const h = rows === 1 ? 3.75 : 2.18;
+  items.forEach((block, index) => {
     addCard(
       slide,
       {
         x: MARGIN + (index % columns) * (w + gap),
-        y: 1.75 + Math.floor(index / columns) * (h + gap),
+        y: 1.72 + Math.floor(index / columns) * (h + gap),
         w,
         h,
         number: index + 1,
-        text,
+        block,
       },
       theme,
     );
   });
 }
 
-function addSplitLayout(slide, bullets, theme, medical) {
-  const panelX = 7.52;
-  slide.addShape("roundRect", {
-    x: panelX,
-    y: 1.58,
-    w: 5.12,
-    h: 4.9,
-    rectRadius: 0.08,
-    fill: { color: theme.palette.dark },
-    line: { color: theme.palette.dark },
-    shadow: softShadow(),
-  });
-  slide.addText(medical ? "HUJAYRA\nMIQYOSIDA" : "ASOSIY\nG'OYA", {
-    x: panelX + 0.5,
-    y: 5.35,
-    w: 2.1,
-    h: 0.56,
-    fontFace: theme.typography.body,
-    fontSize: 11,
-    bold: true,
-    charSpacing: 1.5,
-    color: "BFE0DD",
-    margin: 0,
-  });
-  addVisualCluster(slide, theme, panelX + 0.38, 1.75, 0.86, medical);
-  bullets.slice(0, 4).forEach((text, index) => {
+function addSplitLayout(slide, blocks, theme, medical, mode = "editorial-split") {
+  const panelX = 7.78;
+  const labels = mode === "case-study"
+    ? ["DALIL", "KONTEKST", "XULOSA"]
+    : ["MANBA", "TALQIN", "NARRATIV"];
+  if (medical) {
     slide.addShape("roundRect", {
-      x: MARGIN,
-      y: 1.63 + index * 1.12,
-      w: 6.3,
-      h: 0.88,
-      rectRadius: 0.05,
-      fill: { color: index === 0 ? theme.palette.pale : theme.palette.surface },
-      line: { color: theme.palette.pale, width: 1 },
+      x: panelX,
+      y: 1.58,
+      w: 4.85,
+      h: 4.9,
+      rectRadius: 0.08,
+      fill: { color: theme.palette.dark },
+      line: { color: theme.palette.dark },
     });
-    slide.addText(`${String(index + 1).padStart(2, "0")}  ${text}`, {
-      x: MARGIN + 0.28,
-      y: 1.91 + index * 1.12,
-      w: 5.7,
-      h: 0.25,
+    addVisualCluster(slide, theme, panelX + 0.3, 1.72, 0.82, true);
+  } else {
+    addHistoricalArchiveVisual(slide, theme, panelX + 0.18, 1.72, 1.02, labels);
+  }
+  const items = blocks.slice(0, 3);
+  items.forEach((block, index) => {
+    const y = 1.66 + index * 1.56;
+    slide.addText(String(index + 1).padStart(2, "0"), {
+      x: MARGIN,
+      y,
+      w: 0.45,
+      h: 0.22,
       fontFace: theme.typography.body,
-      fontSize: 16,
-      bold: index === 0,
+      fontSize: 9.5,
+      bold: true,
+      charSpacing: 1.1,
+      color: theme.palette.primary,
+      margin: 0,
+    });
+    slide.addText(block.heading, {
+      x: MARGIN + 0.62,
+      y: y - 0.03,
+      w: 6.18,
+      h: 0.36,
+      fontFace: theme.typography.heading,
+      fontSize: 17.5,
+      bold: true,
       color: theme.palette.foreground,
       margin: 0,
       fit: "shrink",
     });
+    slide.addText(block.body, {
+      x: MARGIN + 0.62,
+      y: y + 0.45,
+      w: 6.18,
+      h: 0.72,
+      fontFace: theme.typography.body,
+      fontSize: 14.5,
+      color: theme.palette.muted,
+      margin: 0,
+      valign: "top",
+      fit: "shrink",
+    });
+    if (index < items.length - 1) {
+      slide.addShape("line", {
+        x: MARGIN + 0.62,
+        y: y + 1.28,
+        w: 6.05,
+        h: 0,
+        line: { color: theme.palette.pale, width: 1 },
+      });
+    }
   });
 }
 
-function addProcessFromBullets(slide, bullets, theme) {
-  const items = bullets.slice(0, 5);
+function addProcessFromBlocks(slide, blocks, theme) {
+  const items = blocks.slice(0, 4);
   const startX = 0.92;
   const totalW = 11.45;
   const itemW = totalW / items.length;
   slide.addShape("line", {
     x: startX + 0.4,
-    y: 3.1,
+    y: 3.02,
     w: totalW - 0.8,
     h: 0,
-    line: { color: theme.palette.secondary, width: 4 },
+    line: { color: theme.palette.secondary, width: 3 },
   });
-  items.forEach((text, index) => {
+  items.forEach((block, index) => {
     const center = startX + index * itemW + itemW / 2;
     slide.addShape("ellipse", {
-      x: center - 0.38,
-      y: 2.72,
-      w: 0.76,
-      h: 0.76,
+      x: center - 0.33,
+      y: 2.69,
+      w: 0.66,
+      h: 0.66,
       fill: { color: index === items.length - 1 ? theme.palette.accent : theme.palette.primary },
       line: { color: "FFFFFF", width: 2 },
-      shadow: softShadow(),
     });
     slide.addText(String(index + 1), {
-      x: center - 0.28,
-      y: 2.96,
-      w: 0.56,
+      x: center - 0.25,
+      y: 2.9,
+      w: 0.5,
       h: 0.18,
       align: "center",
       fontFace: theme.typography.body,
-      fontSize: 11,
+      fontSize: 10.5,
       bold: true,
       color: "FFFFFF",
       margin: 0,
     });
-    slide.addText(text, {
-      x: startX + index * itemW + 0.05,
-      y: index % 2 === 0 ? 1.67 : 3.78,
-      w: itemW - 0.1,
-      h: 1.1,
+    const top = index % 2 === 0;
+    const headingY = top ? 1.64 : 3.68;
+    slide.addText(block.heading, {
+      x: startX + index * itemW + 0.08,
+      y: headingY,
+      w: itemW - 0.16,
+      h: 0.44,
       align: "center",
-      valign: index % 2 === 0 ? "bottom" : "top",
-      fontFace: theme.typography.body,
-      fontSize: 15,
+      fontFace: theme.typography.heading,
+      fontSize: 16,
       bold: true,
       color: theme.palette.foreground,
-      margin: 0.02,
+      margin: 0,
+      fit: "shrink",
+    });
+    slide.addText(block.body, {
+      x: startX + index * itemW + 0.08,
+      y: headingY + 0.54,
+      w: itemW - 0.16,
+      h: 0.82,
+      align: "center",
+      fontFace: theme.typography.body,
+      fontSize: 12.8,
+      color: theme.palette.muted,
+      margin: 0,
+      valign: "top",
       fit: "shrink",
     });
   });
@@ -440,9 +635,9 @@ function addProcessFromBullets(slide, bullets, theme) {
 
 function addTable(slide, table, theme, options = {}) {
   const {
-    x = 4.35,
+    x = 4.82,
     y = 1.72,
-    w = 8.3,
+    w = 7.83,
     h = 4.75,
     fontSize = 15,
     rowH = 0.62,
@@ -534,26 +729,38 @@ function addChart(slide, chart, theme) {
   });
 }
 
-function addSideInsights(slide, bullets, theme) {
-  bullets.slice(0, 4).forEach((text, index) => {
+function addSideInsights(slide, content, theme) {
+  contentBlocksFor(content).slice(0, 3).forEach((block, index) => {
+    const y = 1.65 + index * 1.52;
     slide.addShape("roundRect", {
       x: MARGIN,
-      y: 1.65 + index * 1.13,
+      y,
       w: 3.95,
-      h: 0.88,
+      h: 1.27,
       rectRadius: 0.05,
       fill: { color: index === 0 ? theme.palette.dark : theme.palette.surface },
       line: { color: index === 0 ? theme.palette.dark : theme.palette.pale },
     });
-    slide.addText(text, {
+    slide.addText(block.heading, {
       x: MARGIN + 0.24,
-      y: 1.91 + index * 1.13,
+      y: y + 0.2,
       w: 3.47,
-      h: 0.3,
-      fontFace: theme.typography.body,
-      fontSize: 15,
+      h: 0.28,
+      fontFace: theme.typography.heading,
+      fontSize: 14.5,
       bold: true,
       color: index === 0 ? "FFFFFF" : theme.palette.foreground,
+      margin: 0,
+      fit: "shrink",
+    });
+    slide.addText(block.body, {
+      x: MARGIN + 0.24,
+      y: y + 0.56,
+      w: 3.47,
+      h: 0.5,
+      fontFace: theme.typography.body,
+      fontSize: 10.8,
+      color: index === 0 ? "E9F1F0" : theme.palette.muted,
       margin: 0,
       fit: "shrink",
     });
@@ -631,6 +838,43 @@ function addSequence(slide, layout, theme) {
         fit: "shrink",
       });
     }
+  });
+}
+
+function addLayoutTakeaway(slide, content, theme) {
+  const block = contentBlocksFor(content)[0];
+  if (!block?.body) return;
+  slide.addShape("roundRect", {
+    x: 1.18,
+    y: 5.18,
+    w: 10.98,
+    h: 0.88,
+    rectRadius: 0.06,
+    fill: { color: theme.palette.dark },
+    line: { color: theme.palette.dark },
+  });
+  slide.addText(block.heading.toLocaleUpperCase("uz"), {
+    x: 1.45,
+    y: 5.38,
+    w: 2.25,
+    h: 0.2,
+    fontFace: theme.typography.body,
+    fontSize: 10,
+    bold: true,
+    charSpacing: 1.1,
+    color: theme.palette.secondary,
+    margin: 0,
+  });
+  slide.addText(block.body, {
+    x: 3.65,
+    y: 5.31,
+    w: 8.15,
+    h: 0.38,
+    fontFace: theme.typography.body,
+    fontSize: 13.5,
+    color: "FFFFFF",
+    margin: 0,
+    fit: "shrink",
   });
 }
 
@@ -735,29 +979,52 @@ function addConclusion(slide, content, deck, theme, index, medical) {
     margin: 0,
     fit: "shrink",
   });
-  content.bullets.slice(0, 4).forEach((text, bulletIndex) => {
+  contentBlocksFor(content).slice(0, 3).forEach((block, bulletIndex) => {
     slide.addShape("roundRect", {
       x: MARGIN,
-      y: 2.55 + bulletIndex * 0.92,
+      y: 2.55 + bulletIndex * 1.12,
       w: 7.25,
-      h: 0.68,
+      h: 0.9,
       rectRadius: 0.05,
       fill: { color: theme.palette.primary },
       line: { color: theme.palette.secondary },
     });
-    slide.addText(`0${bulletIndex + 1}  ${text}`, {
+    slide.addText(`0${bulletIndex + 1}  ${block.heading}`, {
       x: MARGIN + 0.25,
-      y: 2.77 + bulletIndex * 0.92,
+      y: 2.68 + bulletIndex * 1.12,
       w: 6.7,
-      h: 0.22,
-      fontFace: theme.typography.body,
-      fontSize: 15,
+      h: 0.24,
+      fontFace: theme.typography.heading,
+      fontSize: 14.5,
+      bold: true,
       color: "FFFFFF",
       margin: 0,
       fit: "shrink",
     });
+    slide.addText(block.body, {
+      x: MARGIN + 0.65,
+      y: 3.0 + bulletIndex * 1.12,
+      w: 6.2,
+      h: 0.3,
+      fontFace: theme.typography.body,
+      fontSize: 11.5,
+      color: "F4E8DA",
+      margin: 0,
+      fit: "shrink",
+    });
   });
-  addVisualCluster(slide, theme, 8.55, 1.3, 0.92, medical);
+  if (medical) {
+    addVisualCluster(slide, theme, 8.55, 1.3, 0.92, true);
+  } else {
+    addHistoricalArchiveVisual(
+      slide,
+      theme,
+      8.2,
+      1.45,
+      0.95,
+      ["DALIL", "METOD", "NATIJA"],
+    );
+  }
   addFooter(slide, index, deck.slides.length, theme, true);
 }
 
@@ -790,12 +1057,13 @@ export async function renderPresentation(input, outputPath) {
 
   for (const [index, content] of deck.slides.entries()) {
     const slide = pptx.addSlide();
+    const editorialImages = curatedHistoricalImages(content, medical);
     const canBeCover =
       index === 0 &&
       !content.table &&
       !content.chart &&
       !content.layout &&
-      !content.image_paths?.length;
+      !editorialImages.length;
     const isConclusion =
       index === deck.slides.length - 1 && deck.slides.length > 2;
 
@@ -806,11 +1074,11 @@ export async function renderPresentation(input, outputPath) {
     } else {
       slide.background = { color: theme.palette.background };
       addHeader(slide, content.title, theme, index, sectionLabel);
-      if (content.image_paths?.length) {
-        addSideInsights(slide, content.bullets, theme);
-        await addImages(slide, content.image_paths, theme);
+      if (editorialImages.length) {
+        addSideInsights(slide, content, theme);
+        await addImages(slide, editorialImages, theme);
       } else if (content.chart) {
-        addSideInsights(slide, content.bullets, theme);
+        addSideInsights(slide, content, theme);
         addChart(slide, content.chart, theme);
       } else if (content.table && content.layout) {
         if (content.layout.type === "swot") {
@@ -827,21 +1095,28 @@ export async function renderPresentation(input, outputPath) {
           rowH: 0.34,
         });
       } else if (content.table) {
-        addSideInsights(slide, content.bullets, theme);
+        addSideInsights(slide, content, theme);
         addTable(slide, content.table, theme);
       } else if (content.layout?.type === "swot") {
         addSwot(slide, content.layout, theme);
       } else if (content.layout) {
         addSequence(slide, content.layout, theme);
-      } else if (index % 3 === 1) {
-        addCardGrid(slide, content.bullets, theme);
-      } else if (index % 3 === 2) {
-        addSplitLayout(slide, content.bullets, theme, medical);
+        addLayoutTakeaway(slide, content, theme);
       } else {
-        addProcessFromBullets(slide, content.bullets, theme);
+        const blocks = contentBlocksFor(content);
+        const editorialLayout = selectEditorialLayout(content, index);
+        if (["cards", "comparison"].includes(editorialLayout)) {
+          addCardGrid(slide, blocks, theme);
+        } else if (editorialLayout === "process") {
+          addProcessFromBlocks(slide, blocks, theme);
+        } else {
+          addSplitLayout(slide, blocks, theme, medical, editorialLayout);
+        }
       }
       addFooter(slide, index, deck.slides.length, theme);
     }
+
+    addSourceLine(slide, content, theme, canBeCover || isConclusion);
 
     if (["PREMIUM", "PREMIUM_PLUS"].includes(deck.plan_code)) {
       const notes = notesFor(content);

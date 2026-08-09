@@ -6,7 +6,13 @@ import pytest
 import respx
 from openai import BadRequestError
 
-from modules.ai.contracts import PresentationRequest
+from modules.ai.contracts import (
+    ContentGenerationRequest,
+    GeneratedContent,
+    GeneratedContentBlock,
+    GeneratedContentSlide,
+    PresentationRequest,
+)
 from modules.ai.providers.openai_compatible import OpenAICompatibleProvider
 
 
@@ -327,3 +333,71 @@ async def test_outline_recovers_from_valid_schema_with_wrong_slide_count() -> No
 
     assert len(result.slides) == 2
     assert route.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_content_generation_batches_large_decks_without_losing_slide_numbers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = OpenAICompatibleProvider(
+        base_url="https://api.example.test/v1",
+        api_key="test-key",
+        model="test-model",
+        max_retries=0,
+    )
+    batch_numbers: list[list[int]] = []
+
+    async def fake_request_structured(*, messages, response_format, response_validator):
+        request = json.loads(list(messages)[-1]["content"])
+        numbers = [slide["number"] for slide in request["outline"]["slides"]]
+        batch_numbers.append(numbers)
+        generated = GeneratedContent(
+            title="Tarixiy hikoyalar",
+            slides=[
+                GeneratedContentSlide(
+                    number=number,
+                    title=f"Slayd {number}",
+                    body_blocks=[
+                        GeneratedContentBlock(
+                            heading="Dalil",
+                            body="Tekshirilgan manba tarixiy da’voning chegarasi va kontekstini aniq ko‘rsatadigan asos sifatida ishlatiladi.",
+                        ),
+                        GeneratedContentBlock(
+                            heading="Talqin",
+                            body="Muallif pozitsiyasi boshqa mustaqil guvohliklar bilan solishtirilib, muqobil izohlar ham ochiq qayd etiladi.",
+                        ),
+                    ],
+                    speaker_notes=(
+                        "Mazkur slaydda dalil va talqin o‘rtasidagi farqni manba tanqidi bilan bog‘lang. "
+                        "Ishonch chegarasini ko‘rsating, qarshi dalilni muhokama qiling va keyingi slaydga "
+                        "mantiqiy o‘tish yarating."
+                    ),
+                )
+                for number in numbers
+            ],
+        )
+        return response_validator(generated)
+
+    monkeypatch.setattr(provider, "_request_structured", fake_request_structured)
+    outline = {
+        "title": "Tarixiy hikoyalar",
+        "slides": [
+            {"number": number, "title": f"Slayd {number}", "key_points": ["Dalil"]}
+            for number in range(1, 13)
+        ],
+    }
+
+    result = await provider.generate_content(
+        ContentGenerationRequest(
+            title="Tarixiy hikoyalar",
+            language="uz",
+            direction="Tarix",
+            purpose="Akademik tahlil",
+            audience="Oliy ta’lim",
+            knowledge_level="advanced",
+            outline=outline,
+        )
+    )
+
+    assert batch_numbers == [list(range(1, 6)), list(range(6, 11)), [11, 12]]
+    assert [slide.number for slide in result.slides] == list(range(1, 13))

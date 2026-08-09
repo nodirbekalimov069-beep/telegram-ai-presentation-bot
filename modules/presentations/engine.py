@@ -143,6 +143,17 @@ def build_engine_payload(
             "bullets": (expanded_points or key_points)[:8],
             "sources": sources[:10],
         }
+        if expanded_points:
+            slide["content_blocks"] = [
+                {
+                    "heading": str(block["heading"]).strip()[:90],
+                    "body": str(block["body"]).strip()[:420],
+                }
+                for block in body_blocks
+                if isinstance(block, dict)
+                and str(block.get("heading", "")).strip()
+                and str(block.get("body", "")).strip()
+            ][:4]
         expanded_notes = str(expanded.get("speaker_notes", "")).strip()
         if expanded_notes:
             slide["speaker_notes"] = expanded_notes[:10_000]
