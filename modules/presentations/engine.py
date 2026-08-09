@@ -113,6 +113,7 @@ def build_engine_payload(
     design_style: str,
     plan_code: str,
     outline: dict[str, Any],
+    content: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     template = select_template(
         direction=direction,
@@ -120,17 +121,32 @@ def build_engine_payload(
         plan_code=plan_code,
     )
     slides: list[dict[str, Any]] = []
-    for item in outline.get("slides", []):
+    content_slides = content.get("slides", []) if isinstance(content, dict) else []
+    for index, item in enumerate(outline.get("slides", [])):
+        expanded = content_slides[index] if index < len(content_slides) else {}
+        if not isinstance(expanded, dict):
+            expanded = {}
         sources = [result for value in item.get("sources", []) if (result := _source(str(value)))]
         key_points = [
             str(value).strip() for value in item.get("key_points", []) if str(value).strip()
         ]
+        body_blocks = expanded.get("body_blocks", [])
+        expanded_points = [
+            f"{str(block.get('heading', '')).strip()} — {str(block.get('body', '')).strip()}"
+            for block in body_blocks
+            if isinstance(block, dict)
+            and str(block.get("heading", "")).strip()
+            and str(block.get("body", "")).strip()
+        ]
         slide: dict[str, Any] = {
-            "title": str(item.get("title", "Untitled"))[:180],
-            "bullets": key_points[:8],
+            "title": str(expanded.get("title") or item.get("title", "Untitled"))[:180],
+            "bullets": (expanded_points or key_points)[:8],
             "sources": sources[:10],
         }
-        if plan_code in {"premium", "premium_plus"}:
+        expanded_notes = str(expanded.get("speaker_notes", "")).strip()
+        if expanded_notes:
+            slide["speaker_notes"] = expanded_notes[:10_000]
+        elif plan_code.casefold() in {"premium", "premium_plus"}:
             purpose = str(item.get("purpose", "")).strip()
             notes = [purpose, *key_points]
             slide["speaker_notes"] = "\n".join(value for value in notes if value)[:10_000]

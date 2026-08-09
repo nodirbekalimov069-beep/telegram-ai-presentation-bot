@@ -12,6 +12,8 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from modules.ai.contracts import ContentGenerationRequest
+from modules.ai.providers.base import AIProvider
 from modules.files.storage import Storage
 from modules.orders.domain import OrderStateMachine, OrderStatus
 from modules.orders.models import Order
@@ -141,10 +143,12 @@ class GenerationPipeline:
         pdf_converter: PdfConverter,
         storage: Storage,
         work_root: Path,
+        content_provider: AIProvider | None = None,
     ) -> None:
         self._renderer = renderer
         self._pdf_converter = pdf_converter
         self._storage = storage
+        self._content_provider = content_provider
         self._work_root = work_root.expanduser().resolve()
         self._work_root.mkdir(parents=True, exist_ok=True)
         self._machine = OrderStateMachine()
@@ -270,20 +274,58 @@ class GenerationPipeline:
                 session,
                 order_id=order.id,
             )
-            payload = build_engine_payload(
-                title=presentation.title,
-                language=presentation.language,
-                direction=presentation.direction,
-                design_style=presentation.design_style,
-                plan_code=plan.code,
-                outline=dict(presentation.outline),
-            )
+            title = presentation.title
+            language = presentation.language
+            direction = presentation.direction
+            design_style = presentation.design_style
+            plan_code = plan.code
+            outline = dict(presentation.outline)
+            content = dict(presentation.content or {})
+            order_settings = dict(order.settings or {})
             expected_slides = presentation.slide_count
             user_id = presentation.user_id
             order_id = order.id
 
         await self._notify_progress(progress_callback, 10, "content_and_design")
         try:
+            if not content and self._content_provider is not None:
+                await self._notify_progress(progress_callback, 20, "generating_content")
+                request_language = language if language in {"uz", "ru", "en"} else "uz"
+                raw_level = str(order_settings.get("knowledge_level", "intermediate"))
+                knowledge_level = (
+                    raw_level
+                    if raw_level in {"beginner", "intermediate", "advanced"}
+                    else "intermediate"
+                )
+                generated = await self._content_provider.generate_content(
+                    ContentGenerationRequest.model_validate(
+                        {
+                            "title": title,
+                            "language": request_language,
+                            "direction": direction,
+                            "purpose": str(order_settings.get("purpose") or "taqdimot uchun"),
+                            "audience": str(order_settings.get("audience") or "umumiy auditoriya"),
+                            "knowledge_level": knowledge_level,
+                            "outline": outline,
+                        }
+                    )
+                )
+                content = generated.model_dump(mode="json")
+                await self._store_generated_content(
+                    session_factory,
+                    presentation_id=presentation_id,
+                    lease_token=lease_token,
+                    content=content,
+                )
+            payload = build_engine_payload(
+                title=title,
+                language=language,
+                direction=direction,
+                design_style=design_style,
+                plan_code=plan_code,
+                outline=outline,
+                content=content,
+            )
             await self._update_job_progress(
                 session_factory,
                 presentation_id=presentation_id,
@@ -438,6 +480,30 @@ class GenerationPipeline:
             now = datetime.now(UTC)
             job.progress = progress
             job.current_step = current_step
+            job.heartbeat_at = now
+            job.lease_expires_at = now + timedelta(minutes=15)
+
+    async def _store_generated_content(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        presentation_id: int,
+        lease_token: str,
+        content: dict[str, object],
+    ) -> None:
+        async with session_factory() as session, session.begin():
+            presentation = await session.get(Presentation, presentation_id, with_for_update=True)
+            job = await session.scalar(
+                select(GenerationJob)
+                .where(GenerationJob.presentation_id == presentation_id)
+                .with_for_update()
+            )
+            if presentation is None or job is None or job.lease_token != lease_token:
+                raise GenerationLeaseLost("generation lease expired during content generation")
+            presentation.content = content
+            now = datetime.now(UTC)
+            job.progress = 25
+            job.current_step = "content_ready"
             job.heartbeat_at = now
             job.lease_expires_at = now + timedelta(minutes=15)
 

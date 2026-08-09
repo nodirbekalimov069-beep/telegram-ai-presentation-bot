@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from core.config import get_settings
 from core.database.session import create_engine, create_session_factory
+from modules.ai.factory import build_ai_provider, close_ai_provider
 from modules.files.factory import build_storage
 from modules.presentations.delivery import (
     DeliveryInProgress,
@@ -110,11 +111,13 @@ async def _generate(presentation_id: int, *, terminal_failure: bool = False) -> 
     factory = create_session_factory(engine)
     destination = None
     progress_reporter = None
+    provider = None
     try:
         from aiogram import Bot
 
         renderer_path = settings.presentation_renderer.expanduser().resolve()
         storage = build_storage(settings)
+        provider = build_ai_provider(settings)
         pipeline = GenerationPipeline(
             renderer=NodePresentationRenderer(
                 renderer_path.parent,
@@ -123,6 +126,7 @@ async def _generate(presentation_id: int, *, terminal_failure: bool = False) -> 
             pdf_converter=LibreOfficeConverter(binary=settings.libreoffice_binary),
             storage=storage,
             work_root=settings.generation_work_root,
+            content_provider=provider,
         )
         token = settings.telegram_bot_token.get_secret_value()
         if not token:
@@ -200,6 +204,8 @@ async def _generate(presentation_id: int, *, terminal_failure: bool = False) -> 
             await progress_reporter(0, "failed" if terminal_failure else "retrying")
         raise
     finally:
+        if provider is not None:
+            await close_ai_provider(provider)
         await engine.dispose()
 
 

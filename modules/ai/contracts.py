@@ -132,6 +132,41 @@ class Outline(BaseModel):
     slides: list[OutlineSlide] = Field(min_length=1, max_length=30)
 
 
+class ContentGenerationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+
+    title: str = Field(min_length=2, max_length=160)
+    language: Literal["uz", "ru", "en"]
+    direction: str = Field(min_length=2, max_length=100)
+    purpose: str = Field(min_length=2, max_length=300)
+    audience: str = Field(min_length=2, max_length=200)
+    knowledge_level: Literal["beginner", "intermediate", "advanced"]
+    outline: dict[str, object]
+
+
+class GeneratedContentBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+
+    heading: str = Field(min_length=2, max_length=80)
+    body: str = Field(min_length=50, max_length=300)
+
+
+class GeneratedContentSlide(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+
+    number: int = Field(ge=1, le=30)
+    title: str = Field(min_length=2, max_length=120)
+    body_blocks: list[GeneratedContentBlock] = Field(min_length=2, max_length=4)
+    speaker_notes: str = Field(min_length=80, max_length=2_000)
+
+
+class GeneratedContent(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
+
+    title: str = Field(min_length=2, max_length=160)
+    slides: list[GeneratedContentSlide] = Field(min_length=1, max_length=30)
+
+
 class ChatMessage(TypedDict):
     role: Literal["system", "user"]
     content: str
@@ -165,6 +200,48 @@ def build_openai_messages(request: PresentationRequest) -> list[ChatMessage]:
         {"role": "system", "content": _SYSTEM_INSTRUCTION},
         {"role": "user", "content": request.model_dump_json()},
     ]
+
+
+_CONTENT_SYSTEM_INSTRUCTION = (
+    load_system_prompt()
+    + """
+
+## FULL CONTENT GENERATION MODE
+Bu chaqiriq outline yaratish uchun emas. User JSON dagi tasdiqlangan outline'ning HAR BIR
+slaydini auditoriya va bilim darajasiga mos haqiqiy mazmun bilan kengaytir. Faqat GeneratedContent
+JSON contractini qaytar. Har slaydda number, title, 2-4 ta body_blocks va speaker_notes bo'lsin.
+Har body block: qisqa heading va 1-3 gapli tushuntiruvchi body. Outline key_points matnini shunchaki
+takrorlama: ta'rif, sabab-oqibat, kontekst, misol yoki amaliy ahamiyat bilan izohla. Slayddagi matn
+o'qiladigan darajada ixcham bo'lsin; body 300 belgidan oshmasin. Birinchi slayd ham mavzuni aniq
+ta'riflasin, oxirgi slayd esa mazmunli xulosa bersin. Tekshirilmagan aniq sana, raqam, foiz, iqtibos
+yoki manbani uydirma. Faktga ishonch bo'lmasa umumiy, akademik jihatdan ehtiyotkor ifoda ishlat.
+speaker_notes slayddagi matnni kengaytiradigan 2-5 gapdan iborat bo'lsin. Slaydlar soni va number
+outline bilan aynan teng bo'lsin. Markdown, AgentReply yoki tashqi matn qaytarma.
+"""
+)
+
+
+def build_content_messages(request: ContentGenerationRequest) -> list[ChatMessage]:
+    return [
+        {"role": "system", "content": _CONTENT_SYSTEM_INSTRUCTION},
+        {"role": "user", "content": request.model_dump_json()},
+    ]
+
+
+def validate_generated_content(
+    content: GeneratedContent,
+    *,
+    expected_slide_count: int,
+) -> GeneratedContent:
+    if len(content.slides) != expected_slide_count:
+        raise AIContractError(
+            f"generated content slide count {len(content.slides)} does not match "
+            f"{expected_slide_count}"
+        )
+    numbers = [slide.number for slide in content.slides]
+    if numbers != list(range(1, expected_slide_count + 1)):
+        raise AIContractError("generated content slide numbers must be consecutive and one-based")
+    return content
 
 
 def parse_outline(raw: str, *, expected_slide_count: int) -> Outline:

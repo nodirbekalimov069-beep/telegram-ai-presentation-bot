@@ -19,10 +19,14 @@ from pydantic import BaseModel, ValidationError
 
 from modules.ai.contracts import (
     AIContractError,
+    ContentGenerationRequest,
+    GeneratedContent,
     Outline,
     PresentationRequest,
+    build_content_messages,
     build_openai_messages,
     parse_outline,
+    validate_generated_content,
 )
 from modules.ai.presentation_agent import (
     AgentBackendContext,
@@ -172,6 +176,21 @@ class OpenAICompatibleProvider:
             response_validator=lambda outline: parse_outline(
                 outline.model_dump_json(),
                 expected_slide_count=request.slide_count,
+            ),
+        )
+
+    async def generate_content(self, request: ContentGenerationRequest) -> GeneratedContent:
+        raw_slides = request.outline.get("slides", [])
+        expected_slide_count = len(raw_slides) if isinstance(raw_slides, list) else 0
+        return await self._request_structured(
+            messages=cast(
+                Iterable[ChatCompletionMessageParam],
+                build_content_messages(request),
+            ),
+            response_format=GeneratedContent,
+            response_validator=lambda content: validate_generated_content(
+                content,
+                expected_slide_count=expected_slide_count,
             ),
         )
 
