@@ -106,7 +106,12 @@ def service_confirmation_keyboard(
                 text=localizer.text(
                     language,
                     "service.essay.submit"
-                    if service_type in {ServiceType.ESSAY, ServiceType.INDEPENDENT_WORK}
+                    if service_type
+                    in {
+                        ServiceType.ESSAY,
+                        ServiceType.INDEPENDENT_WORK,
+                        ServiceType.COURSE_WORK,
+                    }
                     else "service.submit",
                 ),
                 callback_data=f"svs:{token}",

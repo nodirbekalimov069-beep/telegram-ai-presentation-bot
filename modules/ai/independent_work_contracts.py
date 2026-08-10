@@ -25,7 +25,7 @@ class IndependentWorkGenerationRequest(BaseModel):
 
 
 _UNVERIFIED_CLAIM = re.compile(
-    r"https?://|\bdoi\s*:|\b10\.\d{4,9}/|"
+    r"https?://|\bdoi\s*:|\b10\.\d{4,9}/|\bisbn(?:-1[03])?\b|"
     r"\[\s*\d+(?:\s*[-‐‑‒–—−,;]\s*\d+)*\s*\]|"
     r"\b\d+(?:[.,]\d+)?\s*[%％]|\b\d+\s*[:：∶]\s*\d+\b|"
     r"\b[A-ZА-ЯЁЎҚҒҲ][\w'’.-]{1,60}\s*\((?:18|19|20)\d{2}[a-z]?\)|"
@@ -106,6 +106,24 @@ def _validate_requirement_evidence(value: str) -> str:
     if _META_REQUIREMENT_CLAIM.search(normalized):
         raise ValueError("requirement evidence must be substantive, not a completion claim")
     return _reject_unverified_claims(value)
+
+
+def reject_unverified_academic_claims(value: str) -> str:
+    """Public shared fail-closed policy for source-free academic document services."""
+
+    return _reject_unverified_claims(value)
+
+
+def contains_unicode_number(value: str) -> bool:
+    """Detect every Unicode number category after the caller has separated trusted labels."""
+
+    return _contains_number(value)
+
+
+def validate_substantive_requirement_evidence(value: str) -> str:
+    """Apply the shared bounded, non-meta requirement-evidence policy."""
+
+    return _validate_requirement_evidence(value)
 
 
 class IndependentWorkSection(BaseModel):

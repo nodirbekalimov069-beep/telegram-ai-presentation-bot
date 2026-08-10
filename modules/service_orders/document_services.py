@@ -32,6 +32,10 @@ DOCUMENT_SERVICE_PROFILES = {
         service_type=ServiceType.INDEPENDENT_WORK,
         artifact_stem="mustaqil_ish",
     ),
+    ServiceType.COURSE_WORK: DocumentServiceProfile(
+        service_type=ServiceType.COURSE_WORK,
+        artifact_stem="kurs_ishi",
+    ),
 }
 PRODUCTION_DOCUMENT_SERVICE_TYPES = frozenset(
     service_type.value for service_type in DOCUMENT_SERVICE_PROFILES

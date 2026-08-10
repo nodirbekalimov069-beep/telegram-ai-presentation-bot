@@ -195,6 +195,10 @@
   "orders.artifact_too_large": "The file exceeds the Telegram upload limit. Reduce it or retrieve it through storage.",
   "service.independent.notice": "📝 Enter the independent assignment details. Generation starts only after you confirm.",
   "service.independent.created": "⏳ Your independent assignment is being prepared. DOCX and, when available, PDF will be sent when ready.",
+  "service.course.notice": "📚 Enter the course paper details. Generation starts only after you press ✅ Prepare.",
+  "service.course.created": "⏳ Your course paper is being prepared. DOCX and, when available, PDF will be sent when ready.",
   "service.summary.subject": "Subject",
-  "orders.independent_artifact_caption": "📎 Independent work — {artifact}"
+  "service.summary.sections": "Sections",
+  "orders.independent_artifact_caption": "📎 Independent work — {artifact}",
+  "orders.course_artifact_caption": "📎 Course paper — {artifact}"
 }

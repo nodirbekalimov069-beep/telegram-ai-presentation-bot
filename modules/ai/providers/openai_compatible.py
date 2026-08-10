@@ -30,6 +30,12 @@ from modules.ai.contracts import (
     parse_outline,
     validate_generated_content,
 )
+from modules.ai.course_work_contracts import (
+    CourseWorkDocument,
+    CourseWorkGenerationRequest,
+    build_course_work_messages,
+    materialize_and_validate_course_work,
+)
 from modules.ai.essay_contracts import (
     EssayDocument,
     EssayGenerationRequest,
@@ -278,6 +284,18 @@ class OpenAICompatibleProvider:
             ),
             response_format=IndependentWorkDocument,
             response_validator=partial(materialize_and_validate_independent_work, request=request),
+        )
+
+    async def generate_course_work(
+        self, request: CourseWorkGenerationRequest
+    ) -> CourseWorkDocument:
+        return await self._request_structured(
+            messages=cast(
+                Iterable[ChatCompletionMessageParam],
+                build_course_work_messages(request),
+            ),
+            response_format=CourseWorkDocument,
+            response_validator=partial(materialize_and_validate_course_work, request=request),
         )
 
     async def _request_json_object(

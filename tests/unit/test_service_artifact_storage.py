@@ -69,6 +69,28 @@ async def test_independent_work_artifact_key_uses_safe_service_filename(tmp_path
     assert key == f"users/17/service-orders/43/attempts/{'c' * 32}/mustaqil_ish_43.docx"
 
 
+async def test_course_work_artifact_key_is_owner_scoped_and_never_uses_user_title(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "unsafe-title.docx"
+    source.write_bytes(b"PK\x03\x04-safe-course-docx")
+    storage = LocalStorage(tmp_path / "storage")
+
+    key = await storage.put_service_file(
+        source,
+        user_id=19,
+        service_order_id=44,
+        artifact_type="docx",
+        attempt_token="d" * 32,
+        service_type="course",
+    )
+
+    assert key == f"users/19/service-orders/44/attempts/{'d' * 32}/kurs_ishi_44.docx"
+    assert "unsafe-title" not in key
+    with pytest.raises(StorageAccessDenied):
+        await storage.download_for_user(key, tmp_path / "stolen.docx", user_id=20)
+
+
 async def test_s3_service_artifact_attempt_namespace_and_owner_delete(tmp_path: Path) -> None:
     class FakeS3Client:
         def __init__(self) -> None:

@@ -195,6 +195,10 @@
   "orders.artifact_too_large": "Fayl Telegram yuklash limitidan katta. Uni kichraytirish yoki storage orqali olish kerak.",
   "service.independent.notice": "📝 Mustaqil ish uchun ma’lumotlarni kiriting. Generatsiya faqat tasdiqlaganingizdan keyin boshlanadi.",
   "service.independent.created": "⏳ Mustaqil ishingiz tayyorlanmoqda. Tayyor bo‘lgach DOCX va, imkon bo‘lsa, PDF yuboriladi.",
+  "service.course.notice": "📚 Kurs ishi uchun ma’lumotlarni kiriting. Generatsiya faqat ✅ Tayyorlashni bosganingizdan keyin boshlanadi.",
+  "service.course.created": "⏳ Kurs ishingiz tayyorlanmoqda. Tayyor bo‘lgach DOCX va, imkon bo‘lsa, PDF yuboriladi.",
   "service.summary.subject": "Fan",
-  "orders.independent_artifact_caption": "📎 Mustaqil ish — {artifact}"
+  "service.summary.sections": "Bo‘limlar",
+  "orders.independent_artifact_caption": "📎 Mustaqil ish — {artifact}",
+  "orders.course_artifact_caption": "📎 Kurs ishi — {artifact}"
 }

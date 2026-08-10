@@ -42,7 +42,8 @@ def test_catalog_defines_all_requested_services_and_fields() -> None:
         definition = SERVICE_CATALOG[service_type]
         assert tuple(field.name for field in definition.fields) == expected_fields
         assert definition.production_ready is (
-            service_type in {ServiceType.ESSAY, ServiceType.INDEPENDENT_WORK}
+            service_type
+            in {ServiceType.ESSAY, ServiceType.INDEPENDENT_WORK, ServiceType.COURSE_WORK}
         )
         assert definition.large_job is (service_type is ServiceType.COURSE_WORK)
 

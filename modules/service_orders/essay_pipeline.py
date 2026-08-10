@@ -13,11 +13,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.outbox.models import OutboxEvent
+from modules.ai.course_work_contracts import CourseWorkGenerationRequest
 from modules.ai.essay_contracts import EssayGenerationRequest
 from modules.ai.independent_work_contracts import IndependentWorkGenerationRequest
 from modules.ai.providers.base import AIProvider
 from modules.files.storage import Storage
 from modules.service_orders.catalog import ServiceType
+from modules.service_orders.course_work_documents import CourseWorkDocumentRenderer
 from modules.service_orders.document_services import document_service_profile
 from modules.service_orders.documents import DocumentTooLarge, EssayDocumentRenderer
 from modules.service_orders.independent_work_documents import IndependentWorkDocumentRenderer
@@ -101,7 +103,12 @@ class EssayPipeline:
         *,
         temp_root: Path,
         pdf_converter: PdfConverter,
-        renderer: EssayDocumentRenderer | IndependentWorkDocumentRenderer | None = None,
+        renderer: (
+            EssayDocumentRenderer
+            | IndependentWorkDocumentRenderer
+            | CourseWorkDocumentRenderer
+            | None
+        ) = None,
         service_type: ServiceType = ServiceType.ESSAY,
         lease_seconds: int = 900,
         pdf_timeout_seconds: int = 120,
@@ -114,22 +121,23 @@ class EssayPipeline:
         self._temp_root = temp_root.expanduser().resolve()
         self._pdf_converter = pdf_converter
         self._profile = document_service_profile(service_type)
-        self._generation_failure_message = (
-            "Referat matnini yaratib bo‘lmadi"
-            if service_type is ServiceType.ESSAY
-            else "Mustaqil ish matnini yaratib bo‘lmadi"
-        )
-        self._document_failure_message = (
-            "Referat hujjatini yaratib bo‘lmadi"
-            if service_type is ServiceType.ESSAY
-            else "Mustaqil ish hujjatini yaratib bo‘lmadi"
-        )
+        self._generation_failure_message = {
+            ServiceType.ESSAY: "Referat matnini yaratib bo‘lmadi",
+            ServiceType.INDEPENDENT_WORK: "Mustaqil ish matnini yaratib bo‘lmadi",
+            ServiceType.COURSE_WORK: "Kurs ishi matnini yaratib bo‘lmadi",
+        }[service_type]
+        self._document_failure_message = {
+            ServiceType.ESSAY: "Referat hujjatini yaratib bo‘lmadi",
+            ServiceType.INDEPENDENT_WORK: "Mustaqil ish hujjatini yaratib bo‘lmadi",
+            ServiceType.COURSE_WORK: "Kurs ishi hujjatini yaratib bo‘lmadi",
+        }[service_type]
         if renderer is None:
-            renderer = (
-                EssayDocumentRenderer()
-                if service_type is ServiceType.ESSAY
-                else IndependentWorkDocumentRenderer()
-            )
+            renderers = {
+                ServiceType.ESSAY: EssayDocumentRenderer,
+                ServiceType.INDEPENDENT_WORK: IndependentWorkDocumentRenderer,
+                ServiceType.COURSE_WORK: CourseWorkDocumentRenderer,
+            }
+            renderer = renderers[service_type]()
         self._renderer: Any = renderer
         self._lease_seconds = lease_seconds
         self._pdf_timeout_seconds = pdf_timeout_seconds
@@ -159,8 +167,10 @@ class EssayPipeline:
                 document: Any
                 if self._profile.service_type is ServiceType.ESSAY:
                     document = await self._provider.generate_essay(request)  # type: ignore[arg-type]
-                else:
+                elif self._profile.service_type is ServiceType.INDEPENDENT_WORK:
                     document = await self._provider.generate_independent_work(request)  # type: ignore[arg-type]
+                else:
+                    document = await self._provider.generate_course_work(request)  # type: ignore[arg-type]
             except Exception as exc:
                 await self._release_retryable(
                     order_id,
@@ -175,7 +185,11 @@ class EssayPipeline:
                 token,
                 generation_metadata={
                     "language": document.language,
-                    "section_count": len(document.sections),
+                    "section_count": len(
+                        document.chapters
+                        if self._profile.service_type is ServiceType.COURSE_WORK
+                        else document.sections
+                    ),
                     "reference_count": len(document.references),
                 },
             )
@@ -209,12 +223,28 @@ class EssayPipeline:
                 report = validate_text_pdf(
                     pdf_path,
                     expected_phrases=(document.title,),
+                    minimum_pages=(
+                        4 if self._profile.service_type is ServiceType.COURSE_WORK else 1
+                    ),
                 )
                 if not report.is_valid:
                     raise ValueError("converted PDF failed content validation")
             except Exception:
                 pdf_error = "PDF_CONVERSION_FAILED"
                 pdf_path = None
+
+            if pdf_path is None and self._profile.service_type is ServiceType.COURSE_WORK:
+                await self._mark_terminal(
+                    order_id,
+                    token,
+                    error_code="PDF_CONVERSION_FAILED",
+                    user_message={
+                        "uz": "Kurs ishi PDF faylini xavfsiz tayyorlab bo‘lmadi",
+                        "ru": "Не удалось безопасно подготовить PDF курсовой работы",
+                        "en": "The course paper PDF could not be prepared safely",
+                    }.get(document.language, "Kurs ishi PDF faylini xavfsiz tayyorlab bo‘lmadi"),
+                )
+                raise EssayTerminalError("Course Work PDF conversion or validation failed")
 
             docx_key = self._storage.service_file_key(
                 user_id=user_id,
@@ -298,7 +328,7 @@ class EssayPipeline:
         tuple[
             str,
             int,
-            EssayGenerationRequest | IndependentWorkGenerationRequest,
+            EssayGenerationRequest | IndependentWorkGenerationRequest | CourseWorkGenerationRequest,
             list[str],
         ]
         | None
@@ -348,12 +378,22 @@ class EssayPipeline:
                     else None
                 ),
             }
-            request: EssayGenerationRequest | IndependentWorkGenerationRequest
+            request: (
+                EssayGenerationRequest
+                | IndependentWorkGenerationRequest
+                | CourseWorkGenerationRequest
+            )
             if self._profile.service_type is ServiceType.ESSAY:
                 request = EssayGenerationRequest(**common)  # type: ignore[arg-type]
-            else:
+            elif self._profile.service_type is ServiceType.INDEPENDENT_WORK:
                 request = IndependentWorkGenerationRequest(
                     subject=str(order.normalized_request["subject"]),
+                    **common,  # type: ignore[arg-type]
+                )
+            else:
+                request = CourseWorkGenerationRequest(
+                    subject=str(order.normalized_request["subject"]),
+                    sections=str(order.normalized_request["sections"]),
                     **common,  # type: ignore[arg-type]
                 )
             return token, order.user_id, request, pending_keys
@@ -520,6 +560,32 @@ class IndependentWorkPipeline(EssayPipeline):
         )
 
 
+class CourseWorkPipeline(EssayPipeline):
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        provider: AIProvider,
+        storage: Storage,
+        *,
+        temp_root: Path,
+        pdf_converter: PdfConverter,
+        renderer: CourseWorkDocumentRenderer | None = None,
+        lease_seconds: int = 900,
+        pdf_timeout_seconds: int = 120,
+    ) -> None:
+        super().__init__(
+            session_factory,
+            provider,
+            storage,
+            temp_root=temp_root,
+            pdf_converter=pdf_converter,
+            renderer=renderer,
+            service_type=ServiceType.COURSE_WORK,
+            lease_seconds=lease_seconds,
+            pdf_timeout_seconds=pdf_timeout_seconds,
+        )
+
+
 async def cleanup_document_orphan_artifacts(
     session_factory: async_sessionmaker[AsyncSession],
     storage: Storage,
@@ -569,6 +635,20 @@ async def cleanup_independent_work_orphan_artifacts(
         storage,
         order_id=order_id,
         service_type=ServiceType.INDEPENDENT_WORK,
+    )
+
+
+async def cleanup_course_work_orphan_artifacts(
+    session_factory: async_sessionmaker[AsyncSession],
+    storage: Storage,
+    *,
+    order_id: int,
+) -> bool:
+    return await cleanup_document_orphan_artifacts(
+        session_factory,
+        storage,
+        order_id=order_id,
+        service_type=ServiceType.COURSE_WORK,
     )
 
 
@@ -635,6 +715,22 @@ async def mark_terminal_independent_work_failure(
         session_factory,
         order_id=order_id,
         service_type=ServiceType.INDEPENDENT_WORK,
+        error_code=error_code,
+        user_message=user_message,
+    )
+
+
+async def mark_terminal_course_work_failure(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    order_id: int,
+    error_code: str = "GENERATION_RETRIES_EXHAUSTED",
+    user_message: str = "Kurs ishini tayyorlashda xatolik yuz berdi. Keyinroq qayta urinib ko‘ring.",
+) -> bool:
+    return await mark_terminal_document_failure(
+        session_factory,
+        order_id=order_id,
+        service_type=ServiceType.COURSE_WORK,
         error_code=error_code,
         user_message=user_message,
     )

@@ -8,6 +8,7 @@ from modules.ai.contracts import (
     Outline,
     PresentationRequest,
 )
+from modules.ai.course_work_contracts import CourseWorkDocument, CourseWorkGenerationRequest
 from modules.ai.essay_contracts import EssayDocument, EssayGenerationRequest
 from modules.ai.independent_work_contracts import (
     IndependentWorkDocument,
@@ -25,3 +26,7 @@ class AIProvider(Protocol):
     async def generate_independent_work(
         self, request: IndependentWorkGenerationRequest
     ) -> IndependentWorkDocument: ...
+
+    async def generate_course_work(
+        self, request: CourseWorkGenerationRequest
+    ) -> CourseWorkDocument: ...

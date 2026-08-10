@@ -564,6 +564,11 @@ async def retrieve_service_artifacts(
                 if path.stat().st_size > settings.max_upload_bytes:
                     oversized_count += 1
                     continue
+                caption_key = {
+                    ServiceType.ESSAY: "orders.artifact_caption",
+                    ServiceType.INDEPENDENT_WORK: "orders.independent_artifact_caption",
+                    ServiceType.COURSE_WORK: "orders.course_artifact_caption",
+                }[profile.service_type]
                 await callback.message.answer_document(
                     FSInputFile(
                         path,
@@ -571,11 +576,7 @@ async def retrieve_service_artifacts(
                     ),
                     caption=localizer.text(
                         user.selected_language,
-                        (
-                            "orders.independent_artifact_caption"
-                            if profile.service_type is ServiceType.INDEPENDENT_WORK
-                            else "orders.artifact_caption"
-                        ),
+                        caption_key,
                         artifact=artifact_type.upper(),
                     ),
                 )

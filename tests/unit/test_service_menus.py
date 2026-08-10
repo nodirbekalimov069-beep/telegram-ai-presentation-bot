@@ -3,11 +3,12 @@ from apps.bot.keyboards import (
     ai_services_keyboard,
     language_keyboard,
     main_menu_keyboard,
+    service_confirmation_keyboard,
     service_field_keyboard,
 )
 from apps.bot.localization import Localizer
 from modules.orders.domain import OrderStatus
-from modules.service_orders.catalog import SERVICE_CATALOG
+from modules.service_orders.catalog import SERVICE_CATALOG, ServiceType
 from modules.service_orders.dashboard import friendly_order_status, paginate_orders
 
 
@@ -56,6 +57,19 @@ def test_service_navigation_has_token_scoped_back_home_and_cancel() -> None:
     }
 
 
+def test_course_confirmation_is_explicit_prepare_and_token_scoped() -> None:
+    localizer = Localizer.load_default()
+    keyboard = service_confirmation_keyboard(
+        token="course-token",
+        language="uz",
+        localizer=localizer,
+        service_type=ServiceType.COURSE_WORK,
+    )
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    submit = next(button for button in buttons if button.callback_data == "svs:course-token")
+    assert submit.text == "✅ Tayyorlash"
+
+
 def test_language_selection_can_return_home_in_active_locale() -> None:
     localizer = Localizer.load_default()
     keyboard = language_keyboard(localizer, "ru")
@@ -72,6 +86,25 @@ def test_new_service_locales_are_real_translations() -> None:
     assert localizer.text("ru", "settings.notifications") == "🔔 Уведомления"
     assert localizer.option_label("en", "creative") == "Creative"
     assert localizer.option_label("ru", "medium") == "Средний"
+
+
+def test_course_work_has_complete_uz_ru_en_locale_parity() -> None:
+    localizer = Localizer.load_default()
+    keys = (
+        "service.course",
+        "service.course.notice",
+        "service.course.created",
+        "service.field.subject",
+        "service.field.topic",
+        "service.field.sections",
+        "service.field.length",
+        "service.field.language",
+        "service.field.requirements",
+        "service.summary.sections",
+        "orders.course_artifact_caption",
+    )
+    for language in ("uz", "ru", "en"):
+        assert all(localizer.text(language, key, artifact="DOCX") for key in keys)
 
 
 def test_universal_service_fsm_is_small_and_extensible() -> None:

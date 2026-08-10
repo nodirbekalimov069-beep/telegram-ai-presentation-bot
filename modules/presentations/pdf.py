@@ -113,12 +113,17 @@ def validate_text_pdf(
     *,
     expected_phrases: tuple[str, ...],
     minimum_characters: int = 100,
+    minimum_pages: int = 1,
 ) -> PdfQAReport:
     """Validate a document PDF structurally and against its extracted text."""
+    if minimum_pages < 1:
+        raise ValueError("minimum_pages must be positive")
     report = validate_pdf(path, expected_pages=None)
     issues = list(report.issues)
+    if report.page_count < minimum_pages:
+        issues.append(f"PDF has fewer than {minimum_pages} required pages")
     if issues:
-        return report
+        return PdfQAReport(page_count=report.page_count, issues=tuple(issues))
     try:
         reader = PdfReader(str(path), strict=True)
         extracted = " ".join((page.extract_text() or "") for page in reader.pages)

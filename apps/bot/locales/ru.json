@@ -195,6 +195,10 @@
   "orders.artifact_too_large": "Файл превышает лимит загрузки Telegram. Уменьшите его или получите через хранилище.",
   "service.independent.notice": "📝 Заполните данные самостоятельной работы. Генерация начнётся только после подтверждения.",
   "service.independent.created": "⏳ Самостоятельная работа готовится. После завершения будут отправлены DOCX и, если возможно, PDF.",
+  "service.course.notice": "📚 Заполните данные курсовой работы. Генерация начнётся только после нажатия ✅ Подготовить.",
+  "service.course.created": "⏳ Курсовая работа готовится. После завершения будут отправлены DOCX и, если возможно, PDF.",
   "service.summary.subject": "Предмет",
-  "orders.independent_artifact_caption": "📎 Самостоятельная работа — {artifact}"
+  "service.summary.sections": "Разделы",
+  "orders.independent_artifact_caption": "📎 Самостоятельная работа — {artifact}",
+  "orders.course_artifact_caption": "📎 Курсовая работа — {artifact}"
 }

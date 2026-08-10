@@ -67,6 +67,7 @@ class OutboxService:
             durable_cleanup = event.event_type in {
                 "service.essay.cleanup_requested",
                 "service.independent.cleanup_requested",
+                "service.course.cleanup_requested",
             }
             publisher = publishers.get(event.event_type)
             if publisher is None:

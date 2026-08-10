@@ -91,6 +91,7 @@ _SERVICE_CATALOG = {
             _REQUIREMENTS,
         ),
         "topic",
+        production_ready=True,
         large_job=True,
     ),
     ServiceType.SUMMARY: ServiceDefinition(

@@ -125,3 +125,32 @@ def test_independent_cleanup_failure_requeues_exact_outbox_event(monkeypatch) ->
 
     cleanup.assert_awaited_once_with(73)
     assert requeue.await_args.args[0] == 83
+
+
+def test_service_course_actor_finalizes_after_timeout_budget_exhaustion(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    process = AsyncMock()
+    finalize = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        tasks,
+        "_current_timeout_failures",
+        lambda: tasks._settings.generation_max_retries + 1,
+    )
+    monkeypatch.setattr(tasks, "_process_service_course", process)
+    monkeypatch.setattr(tasks, "_finalize_service_course", finalize)
+
+    tasks._run_service_course_actor(92)
+
+    finalize.assert_awaited_once_with(92)
+    process.assert_not_awaited()
+
+
+def test_course_cleanup_failure_requeues_exact_outbox_event(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    cleanup = AsyncMock(side_effect=ConnectionError("object store unavailable"))
+    requeue = AsyncMock()
+    monkeypatch.setattr(tasks, "_cleanup_service_course_artifacts", cleanup)
+    monkeypatch.setattr(tasks, "_requeue_service_course_cleanup", requeue)
+
+    tasks._run_service_course_cleanup_actor(93, 103)
+
+    cleanup.assert_awaited_once_with(93)
+    assert requeue.await_args.args[0] == 103

@@ -10,6 +10,14 @@ from modules.ai.contracts import (
     PresentationRequest,
 )
 
+from modules.ai.course_work_contracts import (
+    CourseWorkChapter,
+    CourseWorkDocument,
+    CourseWorkGenerationRequest,
+    _requirement_content_terms,
+    requested_course_sections,
+    validate_course_work_against_request,
+)
 from modules.ai.essay_contracts import (
     EssayDocument,
     EssayGenerationRequest,
@@ -232,3 +240,179 @@ class MockAIProvider:
             references=[],
         )
         return validate_independent_work_against_request(document, request)
+
+    async def generate_course_work(
+        self, request: CourseWorkGenerationRequest
+    ) -> CourseWorkDocument:
+        minimum = {"short": 3, "medium": 5, "long": 7}[request.length]
+        headings = list(requested_course_sections(request.sections))
+        fallback_headings = {
+            "uz": [
+                "Konseptual yondashuv",
+                "Muammo tahlili",
+                "Amaliy yechim",
+                "Xavflar va cheklovlar",
+                "Natijani baholash",
+                "Mas’uliyatli tatbiq",
+                "Yakuniy tavsiyalar",
+            ],
+            "ru": [
+                "Концептуальный подход",
+                "Анализ проблемы",
+                "Практическое решение",
+                "Риски и ограничения",
+                "Оценка результата",
+                "Ответственное применение",
+                "Итоговые рекомендации",
+            ],
+            "en": [
+                "Conceptual approach",
+                "Problem analysis",
+                "Practical solution",
+                "Risks and limitations",
+                "Result evaluation",
+                "Responsible application",
+                "Final recommendations",
+            ],
+        }[request.language]
+        existing = {" ".join(value.casefold().split()) for value in headings}
+        for candidate in fallback_headings:
+            if len(headings) >= minimum:
+                break
+            normalized = " ".join(candidate.casefold().split())
+            if normalized not in existing:
+                headings.append(candidate)
+                existing.add(normalized)
+
+        topic_reference = (
+            request.topic if not any(char.isdigit() for char in request.topic) else "mavzu"
+        )
+        subject_reference = (
+            request.subject if not any(char.isdigit() for char in request.subject) else "fan"
+        )
+        paragraph = {
+            "uz": (
+                f"{topic_reference} {subject_reference} doirasida tushunchalarni tizimlashtirish, "
+                "muammoni tarkibiy qismlarga ajratish va amaliy yechimni tekshirish orqali "
+                "yoritiladi. Tahlil nazariya bilan amaliy jarayon o‘rtasidagi bog‘liqlikni "
+                "ochib beradi, cheklovlarni aniq qayd etadi va tekshirilmagan tashqi manbalarni "
+                "dalil sifatida ko‘rsatmasdan ehtiyotkor xulosa chiqarishga xizmat qiladi."
+            ),
+            "ru": (
+                f"Тема {topic_reference} в рамках предмета {subject_reference} раскрывается через "
+                "систематизацию понятий, разделение проблемы на составные части и проверку "
+                "практического решения. Анализ связывает теорию с практическим процессом, "
+                "открыто обозначает ограничения и позволяет формулировать осторожные выводы "
+                "без представления непроверенных внешних материалов в качестве доказательств."
+            ),
+            "en": (
+                f"The topic {topic_reference} is examined within {subject_reference} by organizing "
+                "core concepts, separating the problem into coherent parts, and checking a "
+                "practical solution. The analysis connects theory with practice, states its "
+                "limitations openly, and supports cautious conclusions without presenting "
+                "unverified external material as evidence."
+            ),
+        }[request.language]
+        evidence = None
+        requirement_application = None
+        if request.additional_requirements:
+            requirement_focus = " ".join(
+                _requirement_content_terms(request.additional_requirements)
+            )
+            evidence = {
+                "uz": (
+                    f"{requirement_focus} amaliy yechimda inson nazorati orqali xavfni kamaytiradi "
+                    "va mustaqil tekshiruvni mustahkamlaydi."
+                ),
+                "ru": (
+                    f"{requirement_focus} в практическом решении снижает риск благодаря человеческому "
+                    "контролю и поддерживает независимую проверку результата."
+                ),
+                "en": (
+                    f"{requirement_focus} reduces practical risk through human oversight and supports "
+                    "independent verification of the result."
+                ),
+            }[request.language]
+            requirement_application = {
+                "uz": (
+                    f"{requirement_focus} amaliy qarorlarda inson nazorati, xavfni baholash "
+                    "va natijani mustaqil tekshirish bilan bog‘lanadi."
+                ),
+                "ru": (
+                    f"{requirement_focus} связывается с человеческим контролем, оценкой риска "
+                    "и независимой проверкой результата в практических решениях."
+                ),
+                "en": (
+                    f"{requirement_focus} is connected to human oversight, risk assessment, "
+                    "and independent verification in practical decisions."
+                ),
+            }[request.language]
+        objective = {
+            "uz": (
+                f"{topic_reference} bo‘yicha nazariy tushunchalarni tizimlashtirish, muammoni "
+                "amaliy tahlil qilish va mas’uliyatli yechim mezonlarini asoslash."
+            ),
+            "ru": (
+                f"Систематизировать теоретические понятия по теме {topic_reference}, провести "
+                "практический анализ проблемы и обосновать критерии ответственного решения."
+            ),
+            "en": (
+                f"To organize the theoretical concepts of {topic_reference}, analyze the problem "
+                "in practice, and justify criteria for a responsible solution."
+            ),
+        }[request.language]
+        tasks = {
+            "uz": [
+                "Mavzuning asosiy tushunchalarini izchil tavsiflash",
+                "Muammoning amaliy ko‘rinishini tarkibiy jihatdan tahlil qilish",
+                "Mas’uliyatli yechim va natijani tekshirish bo‘yicha tavsiya berish",
+            ],
+            "ru": [
+                "Последовательно описать основные понятия темы",
+                "Структурно проанализировать практическое проявление проблемы",
+                "Предложить ответственное решение и способ проверки результата",
+            ],
+            "en": [
+                "Describe the central concepts of the topic coherently",
+                "Analyze the practical form of the problem structurally",
+                "Recommend a responsible solution and a way to verify the result",
+            ],
+        }[request.language]
+        conclusion = {
+            "uz": (
+                f"{topic_reference} bo‘yicha kurs ishi nazariya va amaliyot o‘rtasidagi "
+                "bog‘liqlikni umumlashtiradi. Muammoni qismlarga ajratish, cheklovlarni ochiq "
+                "ko‘rsatish va natijani inson nazoratida tekshirish mas’uliyatli tatbiq uchun "
+                "asos bo‘ladi."
+            ),
+            "ru": (
+                f"Курсовая работа по теме {topic_reference} обобщает связь теории и практики. "
+                "Разделение проблемы на части, открытое описание ограничений и проверка результата "
+                "под человеческим контролем создают основу для ответственного применения."
+            ),
+            "en": (
+                f"The course paper on {topic_reference} connects theory with practice. Breaking the "
+                "problem into parts, stating limitations openly, and checking the result under human "
+                "oversight provide a basis for responsible application."
+            ),
+        }[request.language]
+        if requirement_application:
+            conclusion = f"{conclusion} {requirement_application}"
+        if evidence:
+            conclusion = f"{conclusion} {evidence}"
+        document = CourseWorkDocument(
+            title=request.topic,
+            subject=request.subject,
+            language=request.language,
+            objective=objective,
+            tasks=tasks,
+            introduction=paragraph,
+            chapters=[
+                CourseWorkChapter(heading=heading, paragraphs=[paragraph, paragraph])
+                for heading in headings
+            ],
+            conclusion=conclusion,
+            requirement_evidence=[evidence] if evidence else [],
+            references=[],
+        )
+        return validate_course_work_against_request(document, request)

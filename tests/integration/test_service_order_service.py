@@ -278,6 +278,7 @@ async def test_independent_work_order_is_idempotent_with_one_outbox_event(
     [
         (ServiceType.ESSAY, "referat"),
         (ServiceType.INDEPENDENT_WORK, "mustaqil_ish"),
+        (ServiceType.COURSE_WORK, "kurs_ishi"),
     ],
 )
 async def test_service_artifact_retrieval_rejects_another_users_order(
@@ -339,6 +340,7 @@ async def test_service_artifact_retrieval_rejects_another_users_order(
     [
         (ServiceType.ESSAY, "referat", "Referat"),
         (ServiceType.INDEPENDENT_WORK, "mustaqil_ish", "Mustaqil ish"),
+        (ServiceType.COURSE_WORK, "kurs_ishi", "Kurs ishi"),
     ],
 )
 async def test_service_artifact_retrieval_sends_owned_docx_and_pdf(
@@ -363,7 +365,7 @@ async def test_service_artifact_retrieval_sends_owned_docx_and_pdf(
                 },
                 idempotency_key="essay-owned-artifact",
             )
-        else:
+        elif service_type is ServiceType.INDEPENDENT_WORK:
             order = await service.create_independent_work_order(
                 session,
                 telegram_user_id=777,
@@ -375,6 +377,20 @@ async def test_service_artifact_retrieval_sends_owned_docx_and_pdf(
                     "requirements": "",
                 },
                 idempotency_key="independent-owned-artifact",
+            )
+        else:
+            order = await service.create_course_work_order(
+                session,
+                telegram_user_id=777,
+                request_payload={
+                    "subject": "Informatika",
+                    "topic": "Owned artifact",
+                    "sections": "Nazariy asoslar; Amaliy tahlil; Tavsiyalar",
+                    "language": "uz",
+                    "length": "short",
+                    "requirements": "",
+                },
+                idempotency_key="course-owned-artifact",
             )
         order.docx_storage_key = f"users/1/service-orders/{order.id}/{artifact_stem}.docx"
         order.pdf_storage_key = f"users/1/service-orders/{order.id}/{artifact_stem}.pdf"
