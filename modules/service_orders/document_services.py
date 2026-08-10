@@ -36,6 +36,10 @@ DOCUMENT_SERVICE_PROFILES = {
         service_type=ServiceType.COURSE_WORK,
         artifact_stem="kurs_ishi",
     ),
+    ServiceType.SUMMARY: DocumentServiceProfile(
+        service_type=ServiceType.SUMMARY,
+        artifact_stem="konspekt",
+    ),
 }
 PRODUCTION_DOCUMENT_SERVICE_TYPES = frozenset(
     service_type.value for service_type in DOCUMENT_SERVICE_PROFILES

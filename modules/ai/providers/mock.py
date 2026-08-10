@@ -30,6 +30,14 @@ from modules.ai.independent_work_contracts import (
     IndependentWorkSection,
     validate_independent_work_against_request,
 )
+from modules.ai.summary_contracts import (
+    SummaryDocument,
+    SummaryGenerationRequest,
+    SummarySelection,
+    SummarySelectionSection,
+    materialize_summary_selection,
+    source_sentences,
+)
 
 _SECTION_TITLES = {
     "uz": (
@@ -416,3 +424,17 @@ class MockAIProvider:
             references=[],
         )
         return validate_course_work_against_request(document, request)
+
+    async def generate_summary(self, request: SummaryGenerationRequest) -> SummaryDocument:
+        count = {"short": 2, "medium": 3, "detailed": 4}[request.detail]
+        indices = list(range(min(12, len(source_sentences(request.source)))))
+        selection = SummarySelection(
+            language=request.language,
+            detail=request.detail,
+            include_requirements=bool(request.additional_requirements),
+            overview_indices=indices,
+            key_point_indices=(indices * 3)[:3],
+            sections=[SummarySelectionSection(sentence_indices=indices[:6]) for _ in range(count)],
+            conclusion_indices=indices,
+        )
+        return materialize_summary_selection(selection, request=request)

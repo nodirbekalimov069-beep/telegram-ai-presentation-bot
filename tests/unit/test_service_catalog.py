@@ -7,6 +7,10 @@ from modules.service_orders.catalog import (
     ServiceType,
     validate_service_request,
 )
+from modules.service_orders.document_services import (
+    PRODUCTION_DOCUMENT_SERVICE_TYPES,
+    document_service_profile,
+)
 
 
 EXPECTED_FIELDS = {
@@ -20,7 +24,7 @@ EXPECTED_FIELDS = {
         "language",
         "requirements",
     ),
-    ServiceType.SUMMARY: ("source", "detail", "language"),
+    ServiceType.SUMMARY: ("source", "detail", "language", "requirements"),
     ServiceType.QUIZ: (
         "topic",
         "question_count",
@@ -43,7 +47,12 @@ def test_catalog_defines_all_requested_services_and_fields() -> None:
         assert tuple(field.name for field in definition.fields) == expected_fields
         assert definition.production_ready is (
             service_type
-            in {ServiceType.ESSAY, ServiceType.INDEPENDENT_WORK, ServiceType.COURSE_WORK}
+            in {
+                ServiceType.ESSAY,
+                ServiceType.INDEPENDENT_WORK,
+                ServiceType.COURSE_WORK,
+                ServiceType.SUMMARY,
+            }
         )
         assert definition.large_job is (service_type is ServiceType.COURSE_WORK)
 
@@ -95,6 +104,16 @@ def test_choice_fields_have_short_deterministic_values() -> None:
                 assert field.options
                 assert len(field.options) == len(set(field.options))
                 assert all(value.isascii() and len(value) <= 20 for value in field.options)
+
+
+def test_summary_is_the_only_new_production_document_profile() -> None:
+    assert {"essay", "independent", "course", "summary"} == PRODUCTION_DOCUMENT_SERVICE_TYPES
+    profile = document_service_profile(ServiceType.SUMMARY)
+    assert profile.artifact_stem == "konspekt"
+    assert profile.requested_event == "service.summary.requested"
+    assert profile.cleanup_event == "service.summary.cleanup_requested"
+    with pytest.raises(ValueError):
+        document_service_profile(ServiceType.QUIZ)
 
 
 def test_pricing_catalog_is_centralized_and_does_not_invent_unknown_prices() -> None:

@@ -197,8 +197,12 @@
   "service.independent.created": "⏳ Самостоятельная работа готовится. После завершения будут отправлены DOCX и, если возможно, PDF.",
   "service.course.notice": "📚 Заполните данные курсовой работы. Генерация начнётся только после нажатия ✅ Подготовить.",
   "service.course.created": "⏳ Курсовая работа готовится. После завершения будут отправлены DOCX и, если возможно, PDF.",
+  "service.summary.notice": "📋 Введите тему или текст для конспекта. Генерация начнётся только после нажатия ✅ Подготовить.",
+  "service.summary.created": "⏳ Конспект готовится. После завершения будут отправлены редактируемый DOCX и проверенный PDF.",
+  "service.summary.failure": "❌ Не удалось безопасно подготовить конспект. Повторите попытку позже.",
   "service.summary.subject": "Предмет",
   "service.summary.sections": "Разделы",
   "orders.independent_artifact_caption": "📎 Самостоятельная работа — {artifact}",
-  "orders.course_artifact_caption": "📎 Курсовая работа — {artifact}"
+  "orders.course_artifact_caption": "📎 Курсовая работа — {artifact}",
+  "orders.summary_artifact_caption": "📎 Конспект — {artifact}"
 }

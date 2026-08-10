@@ -85,6 +85,7 @@ async def start_service(
         ServiceType.ESSAY: "service.essay.notice",
         ServiceType.INDEPENDENT_WORK: "service.independent.notice",
         ServiceType.COURSE_WORK: "service.course.notice",
+        ServiceType.SUMMARY: "service.summary.notice",
     }
     await callback.message.answer(
         localizer.text(
@@ -488,6 +489,13 @@ async def submit_service_order(
                 request_payload=dict(data["fields"]),
                 idempotency_key=f"svc:{callback.from_user.id}:{token}",
             )
+        elif service_type is ServiceType.SUMMARY:
+            await service.create_summary_order(
+                session,
+                telegram_user_id=callback.from_user.id,
+                request_payload=dict(data["fields"]),
+                idempotency_key=f"svc:{callback.from_user.id}:{token}",
+            )
         else:
             await service.create_preview_order(
                 session,
@@ -509,6 +517,8 @@ async def submit_service_order(
         created_key = "service.independent.created"
     elif service_type is ServiceType.COURSE_WORK:
         created_key = "service.course.created"
+    elif service_type is ServiceType.SUMMARY:
+        created_key = "service.summary.created"
     else:
         created_key = "service.created"
     await callback.message.answer(localizer.text(language, created_key))

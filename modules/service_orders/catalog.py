@@ -99,11 +99,13 @@ _SERVICE_CATALOG = {
         "service.summary",
         "📋",
         (
-            _text("source", maximum=4000),
+            _text("source", minimum=10, maximum=4000),
             _choice("detail", ("short", "medium", "detailed")),
             _LANGUAGE,
+            _REQUIREMENTS,
         ),
         "source",
+        production_ready=True,
     ),
     ServiceType.QUIZ: ServiceDefinition(
         ServiceType.QUIZ,

@@ -568,6 +568,7 @@ async def retrieve_service_artifacts(
                     ServiceType.ESSAY: "orders.artifact_caption",
                     ServiceType.INDEPENDENT_WORK: "orders.independent_artifact_caption",
                     ServiceType.COURSE_WORK: "orders.course_artifact_caption",
+                    ServiceType.SUMMARY: "orders.summary_artifact_caption",
                 }[profile.service_type]
                 await callback.message.answer_document(
                     FSInputFile(

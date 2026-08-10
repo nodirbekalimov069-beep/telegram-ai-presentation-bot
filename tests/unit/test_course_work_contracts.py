@@ -90,6 +90,15 @@ def test_course_work_contract_accepts_bound_safe_document() -> None:
     assert validate_course_work_against_request(document, _request()) is document
 
 
+@pytest.mark.parametrize("quoted", ('"AI"', "‘AI’", "’uydirma’"))
+def test_course_work_rejects_short_and_same_sided_untrusted_quotations(quoted: str) -> None:
+    document = _document().model_copy(
+        update={"conclusion": f"{_document().conclusion} Algoritmik fikrlash {quoted}."}
+    )
+    with pytest.raises(AIContractError, match="quotation"):
+        validate_course_work_against_request(document, _request())
+
+
 def test_course_work_contract_is_strict_and_rejects_unverified_material() -> None:
     with pytest.raises(ValidationError):
         CourseWorkDocument.model_validate({**_document().model_dump(), "debug": True})

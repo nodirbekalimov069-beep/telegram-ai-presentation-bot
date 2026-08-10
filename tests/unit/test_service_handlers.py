@@ -74,6 +74,7 @@ async def test_every_service_fsm_reaches_expected_order_submission(
     essay_created = AsyncMock(return_value=SimpleNamespace(id=1))
     independent_created = AsyncMock(return_value=SimpleNamespace(id=1))
     course_created = AsyncMock(return_value=SimpleNamespace(id=1))
+    summary_created = AsyncMock(return_value=SimpleNamespace(id=1))
     monkeypatch.setattr(
         service_handlers,
         "ServiceOrderService",
@@ -83,6 +84,7 @@ async def test_every_service_fsm_reaches_expected_order_submission(
                 create_essay_order=essay_created,
                 create_independent_work_order=independent_created,
                 create_course_work_order=course_created,
+                create_summary_order=summary_created,
             )
         ),
     )
@@ -134,6 +136,7 @@ async def test_every_service_fsm_reaches_expected_order_submission(
     essay_created.assert_not_awaited()
     independent_created.assert_not_awaited()
     course_created.assert_not_awaited()
+    summary_created.assert_not_awaited()
     token = str(state.data["flow_token"])
     submit_callback = SimpleNamespace(
         data=f"svs:{token}",
@@ -154,6 +157,8 @@ async def test_every_service_fsm_reaches_expected_order_submission(
         created = independent_created
     elif service_type is ServiceType.COURSE_WORK:
         created = course_created
+    elif service_type is ServiceType.SUMMARY:
+        created = summary_created
     else:
         created = preview_created
     created.assert_awaited_once()
@@ -163,6 +168,7 @@ async def test_every_service_fsm_reaches_expected_order_submission(
         ServiceType.ESSAY,
         ServiceType.INDEPENDENT_WORK,
         ServiceType.COURSE_WORK,
+        ServiceType.SUMMARY,
     }:
         assert call["service_type"] is service_type
     assert call["idempotency_key"].startswith("svc:777:")

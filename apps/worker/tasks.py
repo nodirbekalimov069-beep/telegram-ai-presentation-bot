@@ -38,9 +38,11 @@ from modules.service_orders.essay_delivery import (
     TelegramCourseWorkDelivery,
     TelegramEssayDelivery,
     TelegramIndependentWorkDelivery,
+    TelegramSummaryDelivery,
     mark_terminal_course_work_delivery_failure,
     mark_terminal_essay_delivery_failure,
     mark_terminal_independent_work_delivery_failure,
+    mark_terminal_summary_delivery_failure,
 )
 from modules.service_orders.essay_pipeline import (
     CourseWorkPipeline,
@@ -48,12 +50,15 @@ from modules.service_orders.essay_pipeline import (
     EssayPipeline,
     EssayTerminalError,
     IndependentWorkPipeline,
+    SummaryPipeline,
     cleanup_course_work_orphan_artifacts,
     cleanup_essay_orphan_artifacts,
     cleanup_independent_work_orphan_artifacts,
+    cleanup_summary_orphan_artifacts,
     mark_terminal_course_work_failure,
     mark_terminal_essay_failure,
     mark_terminal_independent_work_failure,
+    mark_terminal_summary_failure,
 )
 from modules.service_orders.catalog import ServiceType
 from modules.orders.domain import OrderStatus
@@ -459,6 +464,19 @@ async def _process_service_document(service_order_id: int, *, service_type: Serv
                 work_root=settings.generation_work_root / "service-course-delivery",
                 max_upload_bytes=settings.max_upload_bytes,
             )
+        elif service_type is ServiceType.SUMMARY:
+            pipeline = SummaryPipeline(
+                factory,
+                provider,
+                storage,
+                temp_root=settings.generation_work_root / "service-summary",
+                pdf_converter=convert_docx,
+            )
+            delivery = TelegramSummaryDelivery(
+                storage=storage,
+                work_root=settings.generation_work_root / "service-summary-delivery",
+                max_upload_bytes=settings.max_upload_bytes,
+            )
         else:
             raise ValueError("unsupported production document service")
         await pipeline.process(service_order_id)
@@ -483,6 +501,10 @@ async def _process_service_independent(service_order_id: int) -> None:
 
 async def _process_service_course(service_order_id: int) -> None:
     await _process_service_document(service_order_id, service_type=ServiceType.COURSE_WORK)
+
+
+async def _process_service_summary(service_order_id: int) -> None:
+    await _process_service_document(service_order_id, service_type=ServiceType.SUMMARY)
 
 
 async def _finalize_service_essay(service_order_id: int) -> bool:
@@ -525,6 +547,18 @@ async def _finalize_service_course(service_order_id: int) -> bool:
         await engine.dispose()
 
 
+async def _finalize_service_summary(service_order_id: int) -> bool:
+    settings = get_settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    try:
+        if await mark_terminal_summary_delivery_failure(factory, service_order_id=service_order_id):
+            return True
+        return await mark_terminal_summary_failure(factory, order_id=service_order_id)
+    finally:
+        await engine.dispose()
+
+
 async def _cleanup_service_essay_artifacts(service_order_id: int) -> None:
     settings = get_settings()
     engine = create_engine(settings)
@@ -554,6 +588,17 @@ async def _cleanup_service_course_artifacts(service_order_id: int) -> None:
     storage = build_storage(settings)
     try:
         await cleanup_course_work_orphan_artifacts(factory, storage, order_id=service_order_id)
+    finally:
+        await engine.dispose()
+
+
+async def _cleanup_service_summary_artifacts(service_order_id: int) -> None:
+    settings = get_settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    storage = build_storage(settings)
+    try:
+        await cleanup_summary_orphan_artifacts(factory, storage, order_id=service_order_id)
     finally:
         await engine.dispose()
 
@@ -599,6 +644,14 @@ async def _requeue_service_course_cleanup(event_id: int, error: BaseException) -
         event_id,
         error,
         event_type="service.course.cleanup_requested",
+    )
+
+
+async def _requeue_service_summary_cleanup(event_id: int, error: BaseException) -> None:
+    await _requeue_service_document_cleanup(
+        event_id,
+        error,
+        event_type="service.summary.cleanup_requested",
     )
 
 
@@ -699,6 +752,15 @@ def _run_service_course_actor(service_order_id: int) -> None:
     )
 
 
+def _run_service_summary_actor(service_order_id: int) -> None:
+    _run_service_document_actor(
+        service_order_id,
+        process=_process_service_summary,
+        finalize=_finalize_service_summary,
+        label="summary",
+    )
+
+
 @dramatiq.actor(
     queue_name="generation",
     max_retries=_settings.generation_max_retries,
@@ -770,6 +832,18 @@ def generate_service_course(service_order_id: int) -> None:
     _run_service_course_actor(service_order_id)
 
 
+@dramatiq.actor(
+    queue_name="generation",
+    max_retries=_settings.generation_max_retries,
+    retry_when=_generation_retry_when,
+    min_backoff=15_000,
+    max_backoff=300_000,
+    time_limit=600_000,
+)
+def generate_service_summary(service_order_id: int) -> None:
+    _run_service_summary_actor(service_order_id)
+
+
 def _run_service_cleanup_actor(
     service_order_id: int,
     outbox_event_id: int,
@@ -820,6 +894,16 @@ def _run_service_course_cleanup_actor(service_order_id: int, outbox_event_id: in
     )
 
 
+def _run_service_summary_cleanup_actor(service_order_id: int, outbox_event_id: int) -> None:
+    _run_service_cleanup_actor(
+        service_order_id,
+        outbox_event_id,
+        cleanup=_cleanup_service_summary_artifacts,
+        requeue=_requeue_service_summary_cleanup,
+        label="summary",
+    )
+
+
 @dramatiq.actor(
     queue_name="generation",
     max_retries=10,
@@ -854,6 +938,18 @@ def cleanup_service_independent_artifacts(service_order_id: int, outbox_event_id
 )
 def cleanup_service_course_artifacts(service_order_id: int, outbox_event_id: int) -> None:
     _run_service_course_cleanup_actor(service_order_id, outbox_event_id)
+
+
+@dramatiq.actor(
+    queue_name="generation",
+    max_retries=10,
+    retry_when=_cleanup_persistence_retry_when,
+    min_backoff=60_000,
+    max_backoff=3_600_000,
+    time_limit=300_000,
+)
+def cleanup_service_summary_artifacts(service_order_id: int, outbox_event_id: int) -> None:
+    _run_service_summary_cleanup_actor(service_order_id, outbox_event_id)
 
 
 @dramatiq.actor(queue_name="health", max_retries=0, time_limit=10_000)

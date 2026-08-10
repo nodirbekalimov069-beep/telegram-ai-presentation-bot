@@ -52,12 +52,12 @@ def _normalize(value: str) -> str:
 
 _WORD_PATTERN = re.compile(r"[^\W_]+", re.UNICODE)
 _QUOTATION_PATTERNS = (
-    re.compile(r'["＂]([^"＂\n]{4,})["＂]'),
-    re.compile(r"“([^”\n]{4,})”"),
-    re.compile(r"«([^»\n]{4,})»"),
-    re.compile(r"„([^“\n]{4,})“"),
-    re.compile(r"(?<!\w)['＇]((?:[^'＇\n]|(?<=\w)['＇](?=\w)){4,})['＇](?!\w)"),
-    re.compile(r"(?<!\w)‘((?:[^’\n]|(?<=\w)’(?=\w)){4,})’(?!\w)"),
+    re.compile(r'(?<!\w)["＂“”„‟]([^"＂“”„‟\n]+)["＂“”„‟](?!\w)'),
+    re.compile(r"(?<!\w)[«»‹›]([^«»‹›\n]+)[«»‹›](?!\w)"),
+    re.compile(
+        r"(?<!\w)['＇‘’‚‛]((?:[^'＇‘’‚‛\n]|(?<=\w)['＇‘’‚‛](?=\w))+?)"
+        r"['＇‘’‚‛](?!\w)"
+    ),
 )
 _REQUIREMENT_STOPWORDS = {
     "alohida",

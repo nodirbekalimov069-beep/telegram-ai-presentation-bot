@@ -111,6 +111,7 @@ def service_confirmation_keyboard(
                         ServiceType.ESSAY,
                         ServiceType.INDEPENDENT_WORK,
                         ServiceType.COURSE_WORK,
+                        ServiceType.SUMMARY,
                     }
                     else "service.submit",
                 ),

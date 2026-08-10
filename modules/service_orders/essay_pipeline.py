@@ -16,6 +16,7 @@ from core.outbox.models import OutboxEvent
 from modules.ai.course_work_contracts import CourseWorkGenerationRequest
 from modules.ai.essay_contracts import EssayGenerationRequest
 from modules.ai.independent_work_contracts import IndependentWorkGenerationRequest
+from modules.ai.summary_contracts import SummaryGenerationRequest
 from modules.ai.providers.base import AIProvider
 from modules.files.storage import Storage
 from modules.service_orders.catalog import ServiceType
@@ -23,6 +24,7 @@ from modules.service_orders.course_work_documents import CourseWorkDocumentRende
 from modules.service_orders.document_services import document_service_profile
 from modules.service_orders.documents import DocumentTooLarge, EssayDocumentRenderer
 from modules.service_orders.independent_work_documents import IndependentWorkDocumentRenderer
+from modules.service_orders.summary_documents import SummaryDocumentRenderer
 from modules.service_orders.models import ServiceOrder
 from modules.service_orders.service import ServiceOrderStatus
 from modules.presentations.pdf import validate_text_pdf
@@ -107,6 +109,7 @@ class EssayPipeline:
             EssayDocumentRenderer
             | IndependentWorkDocumentRenderer
             | CourseWorkDocumentRenderer
+            | SummaryDocumentRenderer
             | None
         ) = None,
         service_type: ServiceType = ServiceType.ESSAY,
@@ -125,17 +128,20 @@ class EssayPipeline:
             ServiceType.ESSAY: "Referat matnini yaratib bo‘lmadi",
             ServiceType.INDEPENDENT_WORK: "Mustaqil ish matnini yaratib bo‘lmadi",
             ServiceType.COURSE_WORK: "Kurs ishi matnini yaratib bo‘lmadi",
+            ServiceType.SUMMARY: "Konspekt matnini yaratib bo‘lmadi",
         }[service_type]
         self._document_failure_message = {
             ServiceType.ESSAY: "Referat hujjatini yaratib bo‘lmadi",
             ServiceType.INDEPENDENT_WORK: "Mustaqil ish hujjatini yaratib bo‘lmadi",
             ServiceType.COURSE_WORK: "Kurs ishi hujjatini yaratib bo‘lmadi",
+            ServiceType.SUMMARY: "Konspekt hujjatini yaratib bo‘lmadi",
         }[service_type]
         if renderer is None:
             renderers = {
                 ServiceType.ESSAY: EssayDocumentRenderer,
                 ServiceType.INDEPENDENT_WORK: IndependentWorkDocumentRenderer,
                 ServiceType.COURSE_WORK: CourseWorkDocumentRenderer,
+                ServiceType.SUMMARY: SummaryDocumentRenderer,
             }
             renderer = renderers[service_type]()
         self._renderer: Any = renderer
@@ -169,8 +175,10 @@ class EssayPipeline:
                     document = await self._provider.generate_essay(request)  # type: ignore[arg-type]
                 elif self._profile.service_type is ServiceType.INDEPENDENT_WORK:
                     document = await self._provider.generate_independent_work(request)  # type: ignore[arg-type]
-                else:
+                elif self._profile.service_type is ServiceType.COURSE_WORK:
                     document = await self._provider.generate_course_work(request)  # type: ignore[arg-type]
+                else:
+                    document = await self._provider.generate_summary(request)  # type: ignore[arg-type]
             except Exception as exc:
                 await self._release_retryable(
                     order_id,
@@ -223,9 +231,10 @@ class EssayPipeline:
                 report = validate_text_pdf(
                     pdf_path,
                     expected_phrases=(document.title,),
-                    minimum_pages=(
-                        4 if self._profile.service_type is ServiceType.COURSE_WORK else 1
-                    ),
+                    minimum_pages={
+                        ServiceType.COURSE_WORK: 4,
+                        ServiceType.SUMMARY: 2,
+                    }.get(self._profile.service_type, 1),
                 )
                 if not report.is_valid:
                     raise ValueError("converted PDF failed content validation")
@@ -233,18 +242,38 @@ class EssayPipeline:
                 pdf_error = "PDF_CONVERSION_FAILED"
                 pdf_path = None
 
-            if pdf_path is None and self._profile.service_type is ServiceType.COURSE_WORK:
+            if pdf_path is None and self._profile.service_type in {
+                ServiceType.COURSE_WORK,
+                ServiceType.SUMMARY,
+            }:
+                pdf_messages = (
+                    {
+                        "uz": "Kurs ishi PDF faylini xavfsiz tayyorlab bo‘lmadi",
+                        "ru": "Не удалось безопасно подготовить PDF курсовой работы",
+                        "en": "The course paper PDF could not be prepared safely",
+                    }
+                    if self._profile.service_type is ServiceType.COURSE_WORK
+                    else {
+                        "uz": "Konspekt PDF faylini xavfsiz tayyorlab bo‘lmadi",
+                        "ru": "Не удалось безопасно подготовить PDF конспекта",
+                        "en": "The summary-notes PDF could not be prepared safely",
+                    }
+                )
                 await self._mark_terminal(
                     order_id,
                     token,
                     error_code="PDF_CONVERSION_FAILED",
-                    user_message={
-                        "uz": "Kurs ishi PDF faylini xavfsiz tayyorlab bo‘lmadi",
-                        "ru": "Не удалось безопасно подготовить PDF курсовой работы",
-                        "en": "The course paper PDF could not be prepared safely",
-                    }.get(document.language, "Kurs ishi PDF faylini xavfsiz tayyorlab bo‘lmadi"),
+                    user_message=pdf_messages.get(
+                        document.language,
+                        "Akademik hujjat PDF faylini xavfsiz tayyorlab bo‘lmadi",
+                    ),
                 )
-                raise EssayTerminalError("Course Work PDF conversion or validation failed")
+                service_label = (
+                    "Course Work"
+                    if self._profile.service_type is ServiceType.COURSE_WORK
+                    else "Summary"
+                )
+                raise EssayTerminalError(f"{service_label} PDF conversion or validation failed")
 
             docx_key = self._storage.service_file_key(
                 user_id=user_id,
@@ -328,7 +357,10 @@ class EssayPipeline:
         tuple[
             str,
             int,
-            EssayGenerationRequest | IndependentWorkGenerationRequest | CourseWorkGenerationRequest,
+            EssayGenerationRequest
+            | IndependentWorkGenerationRequest
+            | CourseWorkGenerationRequest
+            | SummaryGenerationRequest,
             list[str],
         ]
         | None
@@ -368,6 +400,18 @@ class EssayPipeline:
             order.status = ServiceOrderStatus.GENERATING
             order.error_code = None
             order.error_message = None
+            if self._profile.service_type is ServiceType.SUMMARY:
+                summary_request = SummaryGenerationRequest(
+                    source=str(order.normalized_request["source"]),
+                    detail=str(order.normalized_request["detail"]),  # type: ignore[arg-type]
+                    language=str(order.normalized_request["language"]),  # type: ignore[arg-type]
+                    additional_requirements=(
+                        str(order.normalized_request["requirements"])
+                        if order.normalized_request.get("requirements")
+                        else None
+                    ),
+                )
+                return token, order.user_id, summary_request, pending_keys
             common = {
                 "topic": str(order.normalized_request["topic"]),
                 "language": str(order.normalized_request["language"]),
@@ -586,6 +630,32 @@ class CourseWorkPipeline(EssayPipeline):
         )
 
 
+class SummaryPipeline(EssayPipeline):
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        provider: AIProvider,
+        storage: Storage,
+        *,
+        temp_root: Path,
+        pdf_converter: PdfConverter,
+        renderer: SummaryDocumentRenderer | None = None,
+        lease_seconds: int = 900,
+        pdf_timeout_seconds: int = 120,
+    ) -> None:
+        super().__init__(
+            session_factory,
+            provider,
+            storage,
+            temp_root=temp_root,
+            pdf_converter=pdf_converter,
+            renderer=renderer,
+            service_type=ServiceType.SUMMARY,
+            lease_seconds=lease_seconds,
+            pdf_timeout_seconds=pdf_timeout_seconds,
+        )
+
+
 async def cleanup_document_orphan_artifacts(
     session_factory: async_sessionmaker[AsyncSession],
     storage: Storage,
@@ -649,6 +719,20 @@ async def cleanup_course_work_orphan_artifacts(
         storage,
         order_id=order_id,
         service_type=ServiceType.COURSE_WORK,
+    )
+
+
+async def cleanup_summary_orphan_artifacts(
+    session_factory: async_sessionmaker[AsyncSession],
+    storage: Storage,
+    *,
+    order_id: int,
+) -> bool:
+    return await cleanup_document_orphan_artifacts(
+        session_factory,
+        storage,
+        order_id=order_id,
+        service_type=ServiceType.SUMMARY,
     )
 
 
@@ -731,6 +815,22 @@ async def mark_terminal_course_work_failure(
         session_factory,
         order_id=order_id,
         service_type=ServiceType.COURSE_WORK,
+        error_code=error_code,
+        user_message=user_message,
+    )
+
+
+async def mark_terminal_summary_failure(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    order_id: int,
+    error_code: str = "GENERATION_RETRIES_EXHAUSTED",
+    user_message: str = "Konspektni tayyorlashda xatolik yuz berdi. Keyinroq qayta urinib ko‘ring.",
+) -> bool:
+    return await mark_terminal_document_failure(
+        session_factory,
+        order_id=order_id,
+        service_type=ServiceType.SUMMARY,
         error_code=error_code,
         user_message=user_message,
     )

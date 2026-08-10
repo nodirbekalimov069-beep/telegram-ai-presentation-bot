@@ -197,8 +197,12 @@
   "service.independent.created": "⏳ Mustaqil ishingiz tayyorlanmoqda. Tayyor bo‘lgach DOCX va, imkon bo‘lsa, PDF yuboriladi.",
   "service.course.notice": "📚 Kurs ishi uchun ma’lumotlarni kiriting. Generatsiya faqat ✅ Tayyorlashni bosganingizdan keyin boshlanadi.",
   "service.course.created": "⏳ Kurs ishingiz tayyorlanmoqda. Tayyor bo‘lgach DOCX va, imkon bo‘lsa, PDF yuboriladi.",
+  "service.summary.notice": "📋 Konspekt uchun mavzu yoki matnni kiriting. Generatsiya faqat ✅ Tayyorlashni bosganingizdan keyin boshlanadi.",
+  "service.summary.created": "⏳ Konspektingiz tayyorlanmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi.",
+  "service.summary.failure": "❌ Konspektni xavfsiz tayyorlab bo‘lmadi. Keyinroq qayta urinib ko‘ring.",
   "service.summary.subject": "Fan",
   "service.summary.sections": "Bo‘limlar",
   "orders.independent_artifact_caption": "📎 Mustaqil ish — {artifact}",
-  "orders.course_artifact_caption": "📎 Kurs ishi — {artifact}"
+  "orders.course_artifact_caption": "📎 Kurs ishi — {artifact}",
+  "orders.summary_artifact_caption": "📎 Konspekt — {artifact}"
 }

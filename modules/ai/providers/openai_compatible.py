@@ -48,6 +48,14 @@ from modules.ai.independent_work_contracts import (
     build_independent_work_messages,
     materialize_and_validate_independent_work,
 )
+from modules.ai.summary_contracts import (
+    SummaryDocument,
+    SummaryGenerationRequest,
+    SummarySelection,
+    build_summary_messages,
+    materialize_summary_selection,
+    validate_summary_selection,
+)
 from modules.ai.presentation_agent import (
     AgentBackendContext,
     AgentReply,
@@ -297,6 +305,17 @@ class OpenAICompatibleProvider:
             response_format=CourseWorkDocument,
             response_validator=partial(materialize_and_validate_course_work, request=request),
         )
+
+    async def generate_summary(self, request: SummaryGenerationRequest) -> SummaryDocument:
+        selection = await self._request_structured(
+            messages=cast(
+                Iterable[ChatCompletionMessageParam],
+                build_summary_messages(request),
+            ),
+            response_format=SummarySelection,
+            response_validator=partial(validate_summary_selection, request=request),
+        )
+        return materialize_summary_selection(selection, request=request)
 
     async def _request_json_object(
         self,

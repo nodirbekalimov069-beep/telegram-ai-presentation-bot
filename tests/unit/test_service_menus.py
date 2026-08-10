@@ -107,6 +107,46 @@ def test_course_work_has_complete_uz_ru_en_locale_parity() -> None:
         assert all(localizer.text(language, key, artifact="DOCX") for key in keys)
 
 
+def test_summary_confirmation_is_explicit_prepare_and_token_scoped() -> None:
+    localizer = Localizer.load_default()
+    keyboard = service_confirmation_keyboard(
+        token="summary-token",
+        language="uz",
+        localizer=localizer,
+        service_type=ServiceType.SUMMARY,
+    )
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    submit = next(button for button in buttons if button.callback_data == "svs:summary-token")
+    assert submit.text == "✅ Tayyorlash"
+    assert {button.text for button in buttons} >= {
+        "✅ Tayyorlash",
+        "✏️ O‘zgartirish",
+        "⬅️ Ortga",
+        "❌ Bekor qilish",
+        "🏠 Bosh menyu",
+    }
+
+
+def test_summary_has_complete_uz_ru_en_locale_parity() -> None:
+    localizer = Localizer.load_default()
+    keys = (
+        "service.summary",
+        "service.summary.notice",
+        "service.summary.created",
+        "service.summary.failure",
+        "service.field.source",
+        "service.field.detail",
+        "service.field.language",
+        "service.field.requirements",
+        "orders.summary_artifact_caption",
+    )
+    for language in ("uz", "ru", "en"):
+        assert all(localizer.text(language, key, artifact="DOCX") != key for key in keys)
+    uz_created = localizer.text("uz", "service.summary.created")
+    assert "editable" not in uz_created.casefold()
+    assert "valid" not in uz_created.casefold()
+
+
 def test_universal_service_fsm_is_small_and_extensible() -> None:
     assert {state.state.split(":")[-1] for state in ServiceFlow} == {
         "collecting",

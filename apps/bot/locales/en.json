@@ -197,8 +197,12 @@
   "service.independent.created": "⏳ Your independent assignment is being prepared. DOCX and, when available, PDF will be sent when ready.",
   "service.course.notice": "📚 Enter the course paper details. Generation starts only after you press ✅ Prepare.",
   "service.course.created": "⏳ Your course paper is being prepared. DOCX and, when available, PDF will be sent when ready.",
+  "service.summary.notice": "📋 Enter a topic or text for the summary notes. Generation starts only after you press ✅ Prepare.",
+  "service.summary.created": "⏳ Your summary notes are being prepared. An editable DOCX and validated PDF will be sent when ready.",
+  "service.summary.failure": "❌ The summary notes could not be prepared safely. Please try again later.",
   "service.summary.subject": "Subject",
   "service.summary.sections": "Sections",
   "orders.independent_artifact_caption": "📎 Independent work — {artifact}",
-  "orders.course_artifact_caption": "📎 Course paper — {artifact}"
+  "orders.course_artifact_caption": "📎 Course paper — {artifact}",
+  "orders.summary_artifact_caption": "📎 Summary notes — {artifact}"
 }

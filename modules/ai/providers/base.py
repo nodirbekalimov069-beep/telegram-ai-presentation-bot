@@ -14,6 +14,7 @@ from modules.ai.independent_work_contracts import (
     IndependentWorkDocument,
     IndependentWorkGenerationRequest,
 )
+from modules.ai.summary_contracts import SummaryDocument, SummaryGenerationRequest
 
 
 class AIProvider(Protocol):
@@ -30,3 +31,5 @@ class AIProvider(Protocol):
     async def generate_course_work(
         self, request: CourseWorkGenerationRequest
     ) -> CourseWorkDocument: ...
+
+    async def generate_summary(self, request: SummaryGenerationRequest) -> SummaryDocument: ...
