@@ -114,6 +114,7 @@ def service_confirmation_keyboard(
                         ServiceType.SUMMARY,
                         ServiceType.QUIZ,
                         ServiceType.WRITE_TEXT,
+                        ServiceType.REWRITE,
                     }
                     else "service.submit",
                 ),

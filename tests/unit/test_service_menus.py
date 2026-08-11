@@ -1,4 +1,5 @@
 from apps.bot.fsm import ServiceFlow
+from apps.bot.handlers.menu import _ARTIFACT_CAPTION_KEYS
 from apps.bot.keyboards import (
     ai_services_keyboard,
     language_keyboard,
@@ -10,6 +11,7 @@ from apps.bot.localization import Localizer
 from modules.orders.domain import OrderStatus
 from modules.service_orders.catalog import SERVICE_CATALOG, ServiceType
 from modules.service_orders.dashboard import friendly_order_status, paginate_orders
+from modules.service_orders.document_services import PRODUCTION_DOCUMENT_SERVICE_TYPES
 
 
 def test_main_menu_matches_requested_service_dashboard() -> None:
@@ -156,13 +158,14 @@ def test_write_text_confirmation_locales_and_exact_rollout_policy() -> None:
         ServiceType.SUMMARY,
         ServiceType.QUIZ,
         ServiceType.WRITE_TEXT,
+        ServiceType.REWRITE,
     }
     assert {
         item for item, definition in SERVICE_CATALOG.items() if definition.production_ready
     } == production
     assert {
         item for item, definition in SERVICE_CATALOG.items() if not definition.production_ready
-    } == {ServiceType.REWRITE, ServiceType.TRANSLATE, ServiceType.DOCUMENT}
+    } == {ServiceType.TRANSLATE, ServiceType.DOCUMENT}
     keyboard = service_confirmation_keyboard(
         token="write-token",
         language="uz",
@@ -193,6 +196,79 @@ def test_universal_service_fsm_is_small_and_extensible() -> None:
     assert {state.state.split(":")[-1] for state in ServiceFlow} == {
         "collecting",
         "confirming",
+    }
+
+
+def test_rewrite_uz_ru_en_wizard_localization_parity() -> None:
+    localizer = Localizer.load_default()
+    expected_names = {
+        "uz": "Matnni qayta yozish",
+        "ru": "Переписать текст",
+        "en": "Rewrite text",
+    }
+    keys = (
+        "service.field.text",
+        "service.field.mode",
+        "option.simple",
+        "option.formal",
+        "option.academic",
+        "option.shorten",
+        "option.clarify",
+        "service.rewrite_notice",
+        "service.rewrite_created",
+        "service.essay.submit",
+        "service.edit",
+        "common.back",
+        "common.cancel",
+        "common.main_menu",
+    )
+    for language, name in expected_names.items():
+        assert localizer.text(language, "service.rewrite") == name
+        for key in keys:
+            assert localizer.text(language, key).strip()
+
+
+def test_all_production_document_history_captions_have_uz_ru_en_parity() -> None:
+    assert {item.value for item in _ARTIFACT_CAPTION_KEYS} == PRODUCTION_DOCUMENT_SERVICE_TYPES
+    localizer = Localizer.load_default()
+    for caption_key in _ARTIFACT_CAPTION_KEYS.values():
+        for language in ("uz", "ru", "en"):
+            assert localizer.text(language, caption_key, artifact="DOCX").strip()
+
+
+def test_rewrite_confirmation_and_exact_next_rollout_policy() -> None:
+    localizer = Localizer.load_default()
+    production = {
+        ServiceType.ESSAY,
+        ServiceType.INDEPENDENT_WORK,
+        ServiceType.COURSE_WORK,
+        ServiceType.SUMMARY,
+        ServiceType.QUIZ,
+        ServiceType.WRITE_TEXT,
+        ServiceType.REWRITE,
+    }
+    assert {
+        item for item, definition in SERVICE_CATALOG.items() if definition.production_ready
+    } == production
+    assert {
+        item for item, definition in SERVICE_CATALOG.items() if not definition.production_ready
+    } == {ServiceType.TRANSLATE, ServiceType.DOCUMENT}
+    keyboard = service_confirmation_keyboard(
+        token="rewrite-token",
+        language="uz",
+        localizer=localizer,
+        service_type=ServiceType.REWRITE,
+    )
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    assert next(
+        button for button in buttons if button.callback_data == "svs:rewrite-token"
+    ).text == ("✅ Tayyorlash")
+    assert {button.text for button in buttons} >= {
+        "✅ Tayyorlash",
+        "✏️ O‘zgartirish",
+        "⬅️ Ortga",
+        "❌ Bekor qilish",
+        "🏠 Bosh menyu",
     }
 
 

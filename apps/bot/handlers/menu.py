@@ -38,6 +38,15 @@ from modules.users.service import MAX_FREE_DEMO_ATTEMPTS
 router = Router(name="menu")
 _localizer = Localizer.load_default()
 _ORDERS_PER_PAGE = 5
+_ARTIFACT_CAPTION_KEYS = {
+    ServiceType.ESSAY: "orders.artifact_caption",
+    ServiceType.INDEPENDENT_WORK: "orders.independent_artifact_caption",
+    ServiceType.COURSE_WORK: "orders.course_artifact_caption",
+    ServiceType.SUMMARY: "orders.summary_artifact_caption",
+    ServiceType.QUIZ: "orders.quiz_artifact_caption",
+    ServiceType.WRITE_TEXT: "orders.write_artifact_caption",
+    ServiceType.REWRITE: "orders.rewrite_artifact_caption",
+}
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -564,12 +573,7 @@ async def retrieve_service_artifacts(
                 if path.stat().st_size > settings.max_upload_bytes:
                     oversized_count += 1
                     continue
-                caption_key = {
-                    ServiceType.ESSAY: "orders.artifact_caption",
-                    ServiceType.INDEPENDENT_WORK: "orders.independent_artifact_caption",
-                    ServiceType.COURSE_WORK: "orders.course_artifact_caption",
-                    ServiceType.SUMMARY: "orders.summary_artifact_caption",
-                }[profile.service_type]
+                caption_key = _ARTIFACT_CAPTION_KEYS[profile.service_type]
                 await callback.message.answer_document(
                     FSInputFile(
                         path,

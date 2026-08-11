@@ -77,35 +77,36 @@ async def test_preview_order_creation_is_idempotent_and_server_validated(service
 
 
 @pytest.mark.asyncio
-async def test_idempotency_key_cannot_be_reused_for_different_payload(service_order_db) -> None:  # type: ignore[no-untyped-def]
+@pytest.mark.parametrize("service_type", [ServiceType.TRANSLATE, ServiceType.DOCUMENT])
+async def test_closed_successor_cannot_create_direct_preview_order(
+    service_order_db, service_type: ServiceType
+) -> None:  # type: ignore[no-untyped-def]
     service = ServiceOrderService()
-    base = {
-        "text": "Sinov uchun yetarlicha uzun matn.",
-        "target_language": "en",
-    }
+    payload = (
+        {"text": "Sinov uchun yetarlicha uzun matn.", "target_language": "en"}
+        if service_type is ServiceType.TRANSLATE
+        else {"document_type": "application", "details": "Universitet uchun"}
+    )
     async with service_order_db() as session:
-        await service.create_preview_order(
-            session,
-            telegram_user_id=777,
-            service_type=ServiceType.TRANSLATE,
-            request_payload=base,
-            idempotency_key="svc-test-0002",
-        )
-    async with service_order_db() as session:
-        with pytest.raises(ValueError, match="idempotency"):
+        with pytest.raises(PermissionError, match="preview service is closed"):
             await service.create_preview_order(
                 session,
                 telegram_user_id=777,
-                service_type=ServiceType.TRANSLATE,
-                request_payload={**base, "target_language": "ru"},
-                idempotency_key="svc-test-0002",
+                service_type=service_type,
+                request_payload=payload,
+                idempotency_key=f"closed-{service_type.value}-0002",
             )
+        count = await session.scalar(select(func.count(ServiceOrder.id)))
+    assert count == 0
 
 
 @pytest.mark.asyncio
 async def test_blocked_or_unknown_user_cannot_create_service_order(service_order_db) -> None:  # type: ignore[no-untyped-def]
     service = ServiceOrderService()
-    payload = {"text": "Sinov matni", "mode": "simple"}
+    payload = {
+        "text": "Bu jamoa uchun yetarli va tushunarli sinov matni hisoblanadi.",
+        "mode": "simple",
+    }
     async with service_order_db() as session:
         with pytest.raises(PermissionError):
             await service.create_preview_order(
@@ -137,8 +138,13 @@ async def test_failure_metadata_and_retry_counter_are_persisted(service_order_db
         order = await service.create_preview_order(
             session,
             telegram_user_id=777,
-            service_type=ServiceType.DOCUMENT,
-            request_payload={"document_type": "application", "details": "Universitet uchun"},
+            service_type=ServiceType.ESSAY,
+            request_payload={
+                "topic": "Failure persistence sinovi",
+                "language": "uz",
+                "length": "short",
+                "requirements": "",
+            },
             idempotency_key="svc-test-0005",
         )
     async with service_order_db() as session:

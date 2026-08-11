@@ -205,8 +205,13 @@
   "orders.independent_artifact_caption": "📎 Самостоятельная работа — {artifact}",
   "orders.course_artifact_caption": "📎 Курсовая работа — {artifact}",
   "orders.summary_artifact_caption": "📎 Конспект — {artifact}",
+  "orders.quiz_artifact_caption": "📎 Тест — {artifact}",
+  "orders.write_artifact_caption": "📎 Текст — {artifact}",
+  "orders.rewrite_artifact_caption": "📎 Переписанный текст — {artifact}",
   "service.quiz_notice": "🧠 Введите тему теста. Генерация начнётся только после нажатия ✅ Подготовить.",
   "service.quiz_created": "⏳ Тест готовится. После завершения будут отправлены редактируемый DOCX и проверенный PDF.",
   "service.write_notice": "✍️ Введите тему текста. Генерация начнётся только после нажатия ✅ Подготовить.",
-  "service.write_created": "⏳ Ваш текст готовится. После завершения будут отправлены редактируемый DOCX и проверенный PDF."
+  "service.write_created": "⏳ Ваш текст готовится. После завершения будут отправлены редактируемый DOCX и проверенный PDF.",
+  "service.rewrite_notice": "🔄 Исходный текст будет безопасно переписан в выбранном режиме. ИИ запускается только после ✅ Подготовить.",
+  "service.rewrite_created": "⏳ Ваш текст переписывается. После завершения будут отправлены редактируемый DOCX и проверенный PDF."
 }

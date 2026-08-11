@@ -205,8 +205,13 @@
   "orders.independent_artifact_caption": "📎 Independent work — {artifact}",
   "orders.course_artifact_caption": "📎 Course paper — {artifact}",
   "orders.summary_artifact_caption": "📎 Summary notes — {artifact}",
+  "orders.quiz_artifact_caption": "📎 Quiz — {artifact}",
+  "orders.write_artifact_caption": "📎 Text — {artifact}",
+  "orders.rewrite_artifact_caption": "📎 Rewritten text — {artifact}",
   "service.quiz_notice": "🧠 Enter the quiz topic. Generation starts only after you press ✅ Prepare.",
   "service.quiz_created": "⏳ Your quiz is being prepared. An editable DOCX and validated PDF will be sent when ready.",
   "service.write_notice": "✍️ Enter the text topic. Generation starts only after you press ✅ Prepare.",
-  "service.write_created": "⏳ Your text is being prepared. An editable DOCX and validated PDF will be sent when ready."
+  "service.write_created": "⏳ Your text is being prepared. An editable DOCX and validated PDF will be sent when ready.",
+  "service.rewrite_notice": "🔄 The source text will be safely rewritten in the selected mode. AI starts only after ✅ Prepare.",
+  "service.rewrite_created": "⏳ Your text is being rewritten. An editable DOCX and validated PDF will be sent when ready."
 }

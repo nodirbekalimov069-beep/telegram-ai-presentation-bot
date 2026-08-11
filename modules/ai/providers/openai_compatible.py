@@ -55,6 +55,14 @@ from modules.ai.quiz_contracts import (
     build_quiz_retry_message,
     validate_quiz_against_request,
 )
+from modules.ai.rewrite_contracts import (
+    RewriteDocument,
+    RewriteGenerationRequest,
+    RewriteSelection,
+    build_rewrite_messages,
+    materialize_and_validate_rewrite,
+    validate_rewrite_selection,
+)
 from modules.ai.summary_contracts import (
     SummaryDocument,
     SummaryGenerationRequest,
@@ -132,7 +140,11 @@ class OpenAICompatibleProvider:
         response_format: type[StructuredResponse],
         response_validator: Callable[[StructuredResponse], StructuredResponse] | None = None,
         contract_retry_builder: Callable[[str], str] | None = None,
+        retry_invalid_response: bool = True,
+        temperature: float = 0.2,
     ) -> StructuredResponse:
+        if not math.isfinite(temperature) or not 0 <= temperature <= 2:
+            raise ValueError("AI temperature must be finite and within 0-2")
         request_messages = list(messages)
         system_content = request_messages[0].get("content") if request_messages else None
         system_prompt_sha256 = (
@@ -153,7 +165,7 @@ class OpenAICompatibleProvider:
                     model=self._model,
                     messages=request_messages,
                     response_format=response_format,
-                    temperature=0.2,
+                    temperature=temperature,
                     max_tokens=_MAX_COMPLETION_TOKENS,
                 )
             except _TRANSIENT_ERRORS:
@@ -168,6 +180,10 @@ class OpenAICompatibleProvider:
                 await asyncio.sleep(self._retry_base_delay_seconds * (2**attempt))
                 continue
             except ValidationError as exc:
+                if not retry_invalid_response:
+                    raise AIContractError(
+                        "AI provider returned an invalid structured response"
+                    ) from exc
                 if attempt >= self._max_retries:
                     raise AIContractError(
                         "AI provider repeatedly returned an invalid structured response"
@@ -205,6 +221,8 @@ class OpenAICompatibleProvider:
             if message.refusal:
                 raise AIContractError("AI provider refused the structured request")
             if message.parsed is None:
+                if not retry_invalid_response:
+                    raise AIContractError("AI provider returned no structured response")
                 if attempt >= self._max_retries:
                     raise AIContractError("AI provider repeatedly returned no structured response")
                 request_messages.append(
@@ -225,6 +243,8 @@ class OpenAICompatibleProvider:
                 try:
                     return response_validator(message.parsed)
                 except AIContractError as exc:
+                    if not retry_invalid_response:
+                        raise
                     if attempt >= self._max_retries:
                         raise AIContractError(
                             "AI provider repeatedly returned a response violating the request contract"
@@ -373,6 +393,19 @@ class OpenAICompatibleProvider:
             response_validator=partial(validate_write_text_against_request, request=request),
             contract_retry_builder=partial(build_write_text_retry_message, request=request),
         )
+
+    async def generate_rewrite(self, request: RewriteGenerationRequest) -> RewriteDocument:
+        selection = await self._request_structured(
+            messages=cast(
+                Iterable[ChatCompletionMessageParam],
+                build_rewrite_messages(request),
+            ),
+            response_format=RewriteSelection,
+            response_validator=partial(validate_rewrite_selection, request=request),
+            retry_invalid_response=False,
+            temperature=0.0,
+        )
+        return materialize_and_validate_rewrite(selection, request=request)
 
     async def _request_json_object(
         self,

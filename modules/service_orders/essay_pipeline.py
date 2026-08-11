@@ -13,10 +13,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.outbox.models import OutboxEvent
+from modules.ai.contracts import AIContractError
 from modules.ai.course_work_contracts import CourseWorkGenerationRequest
 from modules.ai.essay_contracts import EssayGenerationRequest
 from modules.ai.independent_work_contracts import IndependentWorkGenerationRequest
 from modules.ai.quiz_contracts import QuizGenerationRequest
+from modules.ai.rewrite_contracts import RewriteGenerationRequest
 from modules.ai.summary_contracts import SummaryGenerationRequest
 from modules.ai.write_text_contracts import WriteTextGenerationRequest
 from modules.ai.providers.base import AIProvider
@@ -27,6 +29,7 @@ from modules.service_orders.document_services import document_service_profile
 from modules.service_orders.documents import DocumentTooLarge, EssayDocumentRenderer
 from modules.service_orders.independent_work_documents import IndependentWorkDocumentRenderer
 from modules.service_orders.quiz_documents import QuizDocumentRenderer
+from modules.service_orders.rewrite_documents import RewriteDocumentRenderer
 from modules.service_orders.summary_documents import SummaryDocumentRenderer
 from modules.service_orders.write_text_documents import WriteTextDocumentRenderer
 from modules.service_orders.models import ServiceOrder
@@ -116,6 +119,7 @@ class EssayPipeline:
             | SummaryDocumentRenderer
             | QuizDocumentRenderer
             | WriteTextDocumentRenderer
+            | RewriteDocumentRenderer
             | None
         ) = None,
         service_type: ServiceType = ServiceType.ESSAY,
@@ -137,6 +141,7 @@ class EssayPipeline:
             ServiceType.SUMMARY: "Konspekt matnini yaratib bo‘lmadi",
             ServiceType.QUIZ: "Quiz savollarini yaratib bo‘lmadi",
             ServiceType.WRITE_TEXT: "Matnni yaratib bo‘lmadi",
+            ServiceType.REWRITE: "Matnni qayta yozib bo‘lmadi",
         }[service_type]
         self._document_failure_message = {
             ServiceType.ESSAY: "Referat hujjatini yaratib bo‘lmadi",
@@ -145,6 +150,7 @@ class EssayPipeline:
             ServiceType.SUMMARY: "Konspekt hujjatini yaratib bo‘lmadi",
             ServiceType.QUIZ: "Quiz hujjatini yaratib bo‘lmadi",
             ServiceType.WRITE_TEXT: "Matn hujjatini yaratib bo‘lmadi",
+            ServiceType.REWRITE: "Qayta yozilgan matn hujjatini yaratib bo‘lmadi",
         }[service_type]
         if renderer is None:
             renderers: dict[ServiceType, type[Any]] = {
@@ -154,6 +160,7 @@ class EssayPipeline:
                 ServiceType.SUMMARY: SummaryDocumentRenderer,
                 ServiceType.QUIZ: QuizDocumentRenderer,
                 ServiceType.WRITE_TEXT: WriteTextDocumentRenderer,
+                ServiceType.REWRITE: RewriteDocumentRenderer,
             }
             renderer = renderers[service_type]()
         self._renderer: Any = renderer
@@ -195,9 +202,37 @@ class EssayPipeline:
                     document = await self._provider.generate_quiz(request)  # type: ignore[arg-type]
                 elif self._profile.service_type is ServiceType.WRITE_TEXT:
                     document = await self._provider.generate_write_text(request)  # type: ignore[arg-type]
+                elif self._profile.service_type is ServiceType.REWRITE:
+                    document = await self._provider.generate_rewrite(request)  # type: ignore[arg-type]
                 else:
                     raise RuntimeError("unsupported document generation service")
+            except AIContractError as exc:
+                if self._profile.service_type is ServiceType.REWRITE:
+                    await self._mark_terminal(
+                        order_id,
+                        token,
+                        error_code="AI_CONTRACT_REJECTED",
+                        user_message=self._generation_failure_message,
+                    )
+                    raise EssayTerminalError("REWRITE contract rejected AI output") from exc
+                await self._release_retryable(
+                    order_id,
+                    token,
+                    error_code="AI_GENERATION_FAILED",
+                    user_message=self._generation_failure_message,
+                )
+                raise EssayRetryableError("AI generation failed") from exc
             except Exception as exc:
+                if self._profile.service_type is ServiceType.REWRITE:
+                    await self._mark_terminal(
+                        order_id,
+                        token,
+                        error_code="AI_PROVIDER_FAILED",
+                        user_message=self._generation_failure_message,
+                    )
+                    raise EssayTerminalError(
+                        "REWRITE provider failed after bounded retries"
+                    ) from exc
                 await self._release_retryable(
                     order_id,
                     token,
@@ -206,18 +241,25 @@ class EssayPipeline:
                 )
                 raise EssayRetryableError("AI generation failed") from exc
 
+            if self._profile.service_type is ServiceType.COURSE_WORK:
+                section_count = len(document.chapters)
+            elif self._profile.service_type is ServiceType.WRITE_TEXT:
+                section_count = len(document.blocks)
+            elif self._profile.service_type is ServiceType.REWRITE:
+                section_count = len(document.segments)
+            elif self._profile.service_type is ServiceType.QUIZ:
+                section_count = 0
+            else:
+                section_count = len(document.sections)
             await self._mark_rendering(
                 order_id,
                 token,
                 generation_metadata={
                     "language": document.language,
-                    "section_count": (
-                        len(document.chapters)
-                        if self._profile.service_type is ServiceType.COURSE_WORK
-                        else len(document.blocks)
-                        if self._profile.service_type is ServiceType.WRITE_TEXT
-                        else len(document.sections)
-                        if self._profile.service_type is not ServiceType.QUIZ
+                    "section_count": section_count,
+                    "segment_count": (
+                        len(document.segments)
+                        if self._profile.service_type is ServiceType.REWRITE
                         else 0
                     ),
                     "question_count": (
@@ -275,6 +317,7 @@ class EssayPipeline:
                 ServiceType.SUMMARY,
                 ServiceType.QUIZ,
                 ServiceType.WRITE_TEXT,
+                ServiceType.REWRITE,
             }:
                 pdf_messages = {
                     ServiceType.COURSE_WORK: {
@@ -297,6 +340,11 @@ class EssayPipeline:
                         "ru": "Не удалось безопасно подготовить PDF текста",
                         "en": "The text PDF could not be prepared safely",
                     },
+                    ServiceType.REWRITE: {
+                        "uz": "Qayta yozilgan matn PDF faylini xavfsiz tayyorlab bo‘lmadi",
+                        "ru": "Не удалось безопасно подготовить PDF переписанного текста",
+                        "en": "The rewritten text PDF could not be prepared safely",
+                    },
                 }[self._profile.service_type]
                 await self._mark_terminal(
                     order_id,
@@ -312,6 +360,7 @@ class EssayPipeline:
                     ServiceType.SUMMARY: "Summary",
                     ServiceType.QUIZ: "Quiz",
                     ServiceType.WRITE_TEXT: "Write Text",
+                    ServiceType.REWRITE: "Rewrite",
                 }[self._profile.service_type]
                 raise EssayTerminalError(f"{service_label} PDF conversion or validation failed")
 
@@ -402,7 +451,8 @@ class EssayPipeline:
             | CourseWorkGenerationRequest
             | SummaryGenerationRequest
             | QuizGenerationRequest
-            | WriteTextGenerationRequest,
+            | WriteTextGenerationRequest
+            | RewriteGenerationRequest,
             list[str],
         ]
         | None
@@ -483,6 +533,12 @@ class EssayPipeline:
                     ),
                 )
                 return token, order.user_id, write_request, pending_keys
+            if self._profile.service_type is ServiceType.REWRITE:
+                rewrite_request = RewriteGenerationRequest(
+                    text=str(order.normalized_request["text"]),
+                    mode=str(order.normalized_request["mode"]),  # type: ignore[arg-type]
+                )
+                return token, order.user_id, rewrite_request, pending_keys
             common = {
                 "topic": str(order.normalized_request["topic"]),
                 "language": str(order.normalized_request["language"]),
@@ -753,6 +809,32 @@ class WriteTextPipeline(EssayPipeline):
         )
 
 
+class RewritePipeline(EssayPipeline):
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        provider: AIProvider,
+        storage: Storage,
+        *,
+        temp_root: Path,
+        pdf_converter: PdfConverter,
+        renderer: RewriteDocumentRenderer | None = None,
+        lease_seconds: int = 900,
+        pdf_timeout_seconds: int = 120,
+    ) -> None:
+        super().__init__(
+            session_factory,
+            provider,
+            storage,
+            temp_root=temp_root,
+            pdf_converter=pdf_converter,
+            renderer=renderer,
+            service_type=ServiceType.REWRITE,
+            lease_seconds=lease_seconds,
+            pdf_timeout_seconds=pdf_timeout_seconds,
+        )
+
+
 class QuizPipeline(EssayPipeline):
     def __init__(
         self,
@@ -887,6 +969,20 @@ async def cleanup_write_text_orphan_artifacts(
     )
 
 
+async def cleanup_rewrite_orphan_artifacts(
+    session_factory: async_sessionmaker[AsyncSession],
+    storage: Storage,
+    *,
+    order_id: int,
+) -> bool:
+    return await cleanup_document_orphan_artifacts(
+        session_factory,
+        storage,
+        order_id=order_id,
+        service_type=ServiceType.REWRITE,
+    )
+
+
 async def mark_terminal_document_failure(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -1014,6 +1110,22 @@ async def mark_terminal_write_text_failure(
         session_factory,
         order_id=order_id,
         service_type=ServiceType.WRITE_TEXT,
+        error_code=error_code,
+        user_message=user_message,
+    )
+
+
+async def mark_terminal_rewrite_failure(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    order_id: int,
+    error_code: str = "GENERATION_RETRIES_EXHAUSTED",
+    user_message: str = "Matnni qayta yozishda xatolik yuz berdi. Keyinroq qayta urinib ko‘ring.",
+) -> bool:
+    return await mark_terminal_document_failure(
+        session_factory,
+        order_id=order_id,
+        service_type=ServiceType.REWRITE,
         error_code=error_code,
         user_message=user_message,
     )

@@ -205,8 +205,13 @@
   "orders.independent_artifact_caption": "📎 Mustaqil ish — {artifact}",
   "orders.course_artifact_caption": "📎 Kurs ishi — {artifact}",
   "orders.summary_artifact_caption": "📎 Konspekt — {artifact}",
+  "orders.quiz_artifact_caption": "📎 Quiz — {artifact}",
+  "orders.write_artifact_caption": "📎 Matn — {artifact}",
+  "orders.rewrite_artifact_caption": "📎 Qayta yozilgan matn — {artifact}",
   "service.quiz_notice": "🧠 Quiz mavzusini kiriting. Generatsiya faqat ✅ Tayyorlashni bosganingizdan keyin boshlanadi.",
   "service.quiz_created": "⏳ Quizingiz tayyorlanmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi.",
   "service.write_notice": "✍️ Matn mavzusini kiriting. Generatsiya faqat ✅ Tayyorlashni bosganingizdan keyin boshlanadi.",
-  "service.write_created": "⏳ Matningiz tayyorlanmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi."
+  "service.write_created": "⏳ Matningiz tayyorlanmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi.",
+  "service.rewrite_notice": "🔄 Manba matn tanlangan usulda xavfsiz qayta yoziladi. AI faqat ✅ Tayyorlash bosilgandan keyin ishlaydi.",
+  "service.rewrite_created": "⏳ Matningiz qayta yozilmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi."
 }

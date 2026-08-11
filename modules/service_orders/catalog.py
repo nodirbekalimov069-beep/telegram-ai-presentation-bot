@@ -5,6 +5,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
+from modules.ai.rewrite_contracts import RewriteGenerationRequest, detect_rewrite_language
 from modules.ai.write_text_contracts import (
     validate_write_text_untrusted_input,
     write_text_requirement_content_terms,
@@ -153,10 +154,11 @@ _SERVICE_CATALOG = {
         "service.rewrite",
         "🔄",
         (
-            _text("text", maximum=4000),
+            _text("text", minimum=40, maximum=4000),
             _choice("mode", ("simple", "formal", "academic", "shorten", "clarify")),
         ),
         "text",
+        production_ready=True,
     ),
     ServiceType.TRANSLATE: ServiceDefinition(
         ServiceType.TRANSLATE,
@@ -201,6 +203,9 @@ PRICING_CATEGORIES = (
 def _validate_service_field_semantics(
     service_type: ServiceType, field_name: str, value: Any
 ) -> Any:
+    if service_type is ServiceType.REWRITE and field_name == "text" and value:
+        detect_rewrite_language(str(value))
+        return value
     if service_type is not ServiceType.WRITE_TEXT or not value:
         return value
     if field_name not in {"topic", "requirements"}:
@@ -234,6 +239,8 @@ def validate_service_request(
         normalized[field.name] = _validate_service_field_semantics(
             canonical_type, field.name, normalized_value
         )
+    if canonical_type is ServiceType.REWRITE:
+        return RewriteGenerationRequest(**normalized).model_dump()
     return normalized
 
 

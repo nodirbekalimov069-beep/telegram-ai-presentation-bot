@@ -92,6 +92,20 @@ _CAPTIONS = {
         "ru": {"docx": "✅ Текст готов — DOCX", "pdf": "✅ Текст готов — PDF"},
         "en": {"docx": "✅ Text ready — DOCX", "pdf": "✅ Text ready — PDF"},
     },
+    ServiceType.REWRITE: {
+        "uz": {
+            "docx": "✅ Qayta yozilgan matn tayyor — DOCX",
+            "pdf": "✅ Qayta yozilgan matn tayyor — PDF",
+        },
+        "ru": {
+            "docx": "✅ Переписанный текст готов — DOCX",
+            "pdf": "✅ Переписанный текст готов — PDF",
+        },
+        "en": {
+            "docx": "✅ Rewritten text ready — DOCX",
+            "pdf": "✅ Rewritten text ready — PDF",
+        },
+    },
 }
 
 
@@ -504,6 +518,24 @@ class TelegramWriteTextDelivery(TelegramEssayDelivery):
         )
 
 
+class TelegramRewriteDelivery(TelegramEssayDelivery):
+    def __init__(
+        self,
+        *,
+        storage: Storage,
+        work_root: Path,
+        max_upload_bytes: int = 49_000_000,
+        lease_seconds: int = 300,
+    ) -> None:
+        super().__init__(
+            storage=storage,
+            work_root=work_root,
+            max_upload_bytes=max_upload_bytes,
+            lease_seconds=lease_seconds,
+            service_type=ServiceType.REWRITE,
+        )
+
+
 async def mark_terminal_document_delivery_failure(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -601,4 +633,14 @@ async def mark_terminal_write_text_delivery_failure(
         session_factory,
         service_order_id=service_order_id,
         service_type=ServiceType.WRITE_TEXT,
+    )
+
+
+async def mark_terminal_rewrite_delivery_failure(
+    session_factory: async_sessionmaker[AsyncSession], *, service_order_id: int
+) -> bool:
+    return await mark_terminal_document_delivery_failure(
+        session_factory,
+        service_order_id=service_order_id,
+        service_type=ServiceType.REWRITE,
     )

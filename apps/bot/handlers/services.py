@@ -70,6 +70,12 @@ async def start_service(
         return
     user = await current_user(session, callback.from_user.id)
     service_type = ServiceType(callback.data.split(":", 1)[1])
+    if not SERVICE_CATALOG[service_type].production_ready:
+        await state.clear()
+        await callback.message.answer(
+            localizer.text(user.selected_language, "service.preview_notice")
+        )
+        return
     token = secrets.token_hex(8)
     await state.set_state(ServiceFlow.collecting)
     await state.set_data(
@@ -88,6 +94,7 @@ async def start_service(
         ServiceType.SUMMARY: "service.summary.notice",
         ServiceType.QUIZ: "service.quiz_notice",
         ServiceType.WRITE_TEXT: "service.write_notice",
+        ServiceType.REWRITE: "service.rewrite_notice",
     }
     await callback.message.answer(
         localizer.text(
@@ -512,6 +519,13 @@ async def submit_service_order(
                 request_payload=dict(data["fields"]),
                 idempotency_key=f"svc:{callback.from_user.id}:{token}",
             )
+        elif service_type is ServiceType.REWRITE:
+            await service.create_rewrite_order(
+                session,
+                telegram_user_id=callback.from_user.id,
+                request_payload=dict(data["fields"]),
+                idempotency_key=f"svc:{callback.from_user.id}:{token}",
+            )
         else:
             await service.create_preview_order(
                 session,
@@ -539,6 +553,8 @@ async def submit_service_order(
         created_key = "service.quiz_created"
     elif service_type is ServiceType.WRITE_TEXT:
         created_key = "service.write_created"
+    elif service_type is ServiceType.REWRITE:
+        created_key = "service.rewrite_created"
     else:
         created_key = "service.created"
     await callback.message.answer(localizer.text(language, created_key))

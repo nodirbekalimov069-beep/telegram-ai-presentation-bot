@@ -48,6 +48,10 @@ DOCUMENT_SERVICE_PROFILES = {
         service_type=ServiceType.WRITE_TEXT,
         artifact_stem="matn",
     ),
+    ServiceType.REWRITE: DocumentServiceProfile(
+        service_type=ServiceType.REWRITE,
+        artifact_stem="qayta_yozish",
+    ),
 }
 PRODUCTION_DOCUMENT_SERVICE_TYPES = frozenset(
     service_type.value for service_type in DOCUMENT_SERVICE_PROFILES

@@ -59,6 +59,8 @@ class ServiceOrderService:
         if not 8 <= len(idempotency_key) <= 64 or not idempotency_key.isascii():
             raise ValueError("invalid idempotency key")
         canonical_type = ServiceType(service_type)
+        if not SERVICE_CATALOG[canonical_type].production_ready:
+            raise PermissionError("preview service is closed")
         payload = validate_service_request(canonical_type, request_payload)
         request_hash = _payload_hash(canonical_type, payload)
 
@@ -206,6 +208,22 @@ class ServiceOrderService:
             session,
             telegram_user_id=telegram_user_id,
             service_type=ServiceType.WRITE_TEXT,
+            request_payload=request_payload,
+            idempotency_key=idempotency_key,
+        )
+
+    async def create_rewrite_order(
+        self,
+        session: AsyncSession,
+        *,
+        telegram_user_id: int,
+        request_payload: dict[str, Any],
+        idempotency_key: str,
+    ) -> ServiceOrder:
+        return await self._create_production_document_order(
+            session,
+            telegram_user_id=telegram_user_id,
+            service_type=ServiceType.REWRITE,
             request_payload=request_payload,
             idempotency_key=idempotency_key,
         )

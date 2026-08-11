@@ -39,6 +39,15 @@ from modules.ai.quiz_contracts import (
     QuizQuestion,
     validate_quiz_against_request,
 )
+from modules.ai.rewrite_contracts import (
+    RewriteGenerationRequest,
+    RewriteSegment,
+    RewriteSelection,
+    _semantic_boundary_tokens,
+    detect_rewrite_language,
+    materialize_and_validate_rewrite,
+    source_rewrite_segments,
+)
 from modules.ai.summary_contracts import (
     SummaryDocument,
     SummaryGenerationRequest,
@@ -690,3 +699,75 @@ class MockAIProvider:
             references=[],
         )
         return validate_write_text_against_request(document, request)
+
+    async def generate_rewrite(self, request: RewriteGenerationRequest):  # type: ignore[no-untyped-def]
+        language = detect_rewrite_language(request.text)
+        openers = {
+            "simple": {
+                "uz": "Sodda qilib aytganda",
+                "ru": "Проще говоря",
+                "en": "In simple terms",
+            },
+            "formal": {
+                "uz": "Mazkur",
+                "ru": "Кроме того",
+                "en": "Furthermore",
+            },
+            "academic": {
+                "uz": "Tahlil jarayoni nuqtayi nazaridan",
+                "ru": "С точки зрения академического анализа процесса",
+                "en": "From an academic analysis perspective",
+            },
+            "clarify": {
+                "uz": "Ya’ni, aniqroq aytganda",
+                "ru": "Иными словами, то есть",
+                "en": "In other words, that is",
+            },
+        }
+        segments: list[RewriteSegment] = []
+        for index, (kind, source) in enumerate(source_rewrite_segments(request.text)):
+            if request.mode == "shorten":
+                words = source.split()
+                boundary = set(_semantic_boundary_tokens(source))
+                removable = {
+                    "uz": {"bilan", "umumiy", "va", "oldin"},
+                    "ru": {"по", "общему", "и", "работы"},
+                    "en": {"the", "through", "a", "shared", "and", "before"},
+                }[language]
+                kept = [
+                    word
+                    for word in words
+                    if word.casefold().strip(".,:;!?") not in removable
+                    or word.casefold().strip(".,:;!?") in boundary
+                ]
+                while len(" ".join(kept)) > int(len(source) * 0.75) and len(kept) > 3:
+                    removable_index = next(
+                        (
+                            index
+                            for index in range(len(kept) - 1, -1, -1)
+                            if kept[index].casefold().strip(".,:;!?") not in boundary
+                            and not any(char.isdigit() for char in kept[index])
+                            and not kept[index].startswith(("http://", "https://"))
+                            and not kept[index][0].isupper()
+                        ),
+                        None,
+                    )
+                    if removable_index is None:
+                        break
+                    kept.pop(removable_index)
+                rewritten = " ".join(kept).rstrip(".,:;!?") + "."
+            else:
+                rewritten = f"{openers[request.mode][language]}, {source}"
+            segments.append(
+                RewriteSegment(
+                    source_index=index,
+                    kind=kind,
+                    text=rewritten,
+                )
+            )
+        selection = RewriteSelection(
+            language=language,
+            mode=request.mode,
+            segments=segments,
+        )
+        return materialize_and_validate_rewrite(selection, request=request)
