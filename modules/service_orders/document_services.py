@@ -44,6 +44,10 @@ DOCUMENT_SERVICE_PROFILES = {
         service_type=ServiceType.QUIZ,
         artifact_stem="quiz",
     ),
+    ServiceType.WRITE_TEXT: DocumentServiceProfile(
+        service_type=ServiceType.WRITE_TEXT,
+        artifact_stem="matn",
+    ),
 }
 PRODUCTION_DOCUMENT_SERVICE_TYPES = frozenset(
     service_type.value for service_type in DOCUMENT_SERVICE_PROFILES

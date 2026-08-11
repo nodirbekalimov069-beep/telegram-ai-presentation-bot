@@ -206,5 +206,7 @@
   "orders.course_artifact_caption": "📎 Kurs ishi — {artifact}",
   "orders.summary_artifact_caption": "📎 Konspekt — {artifact}",
   "service.quiz_notice": "🧠 Quiz mavzusini kiriting. Generatsiya faqat ✅ Tayyorlashni bosganingizdan keyin boshlanadi.",
-  "service.quiz_created": "⏳ Quizingiz tayyorlanmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi."
+  "service.quiz_created": "⏳ Quizingiz tayyorlanmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi.",
+  "service.write_notice": "✍️ Matn mavzusini kiriting. Generatsiya faqat ✅ Tayyorlashni bosganingizdan keyin boshlanadi.",
+  "service.write_created": "⏳ Matningiz tayyorlanmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi."
 }

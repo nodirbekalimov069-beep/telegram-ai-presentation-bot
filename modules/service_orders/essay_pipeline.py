@@ -18,6 +18,7 @@ from modules.ai.essay_contracts import EssayGenerationRequest
 from modules.ai.independent_work_contracts import IndependentWorkGenerationRequest
 from modules.ai.quiz_contracts import QuizGenerationRequest
 from modules.ai.summary_contracts import SummaryGenerationRequest
+from modules.ai.write_text_contracts import WriteTextGenerationRequest
 from modules.ai.providers.base import AIProvider
 from modules.files.storage import Storage
 from modules.service_orders.catalog import ServiceType
@@ -27,6 +28,7 @@ from modules.service_orders.documents import DocumentTooLarge, EssayDocumentRend
 from modules.service_orders.independent_work_documents import IndependentWorkDocumentRenderer
 from modules.service_orders.quiz_documents import QuizDocumentRenderer
 from modules.service_orders.summary_documents import SummaryDocumentRenderer
+from modules.service_orders.write_text_documents import WriteTextDocumentRenderer
 from modules.service_orders.models import ServiceOrder
 from modules.service_orders.service import ServiceOrderStatus
 from modules.presentations.pdf import validate_text_pdf
@@ -113,6 +115,7 @@ class EssayPipeline:
             | CourseWorkDocumentRenderer
             | SummaryDocumentRenderer
             | QuizDocumentRenderer
+            | WriteTextDocumentRenderer
             | None
         ) = None,
         service_type: ServiceType = ServiceType.ESSAY,
@@ -133,6 +136,7 @@ class EssayPipeline:
             ServiceType.COURSE_WORK: "Kurs ishi matnini yaratib bo‘lmadi",
             ServiceType.SUMMARY: "Konspekt matnini yaratib bo‘lmadi",
             ServiceType.QUIZ: "Quiz savollarini yaratib bo‘lmadi",
+            ServiceType.WRITE_TEXT: "Matnni yaratib bo‘lmadi",
         }[service_type]
         self._document_failure_message = {
             ServiceType.ESSAY: "Referat hujjatini yaratib bo‘lmadi",
@@ -140,14 +144,16 @@ class EssayPipeline:
             ServiceType.COURSE_WORK: "Kurs ishi hujjatini yaratib bo‘lmadi",
             ServiceType.SUMMARY: "Konspekt hujjatini yaratib bo‘lmadi",
             ServiceType.QUIZ: "Quiz hujjatini yaratib bo‘lmadi",
+            ServiceType.WRITE_TEXT: "Matn hujjatini yaratib bo‘lmadi",
         }[service_type]
         if renderer is None:
-            renderers = {
+            renderers: dict[ServiceType, type[Any]] = {
                 ServiceType.ESSAY: EssayDocumentRenderer,
                 ServiceType.INDEPENDENT_WORK: IndependentWorkDocumentRenderer,
                 ServiceType.COURSE_WORK: CourseWorkDocumentRenderer,
                 ServiceType.SUMMARY: SummaryDocumentRenderer,
                 ServiceType.QUIZ: QuizDocumentRenderer,
+                ServiceType.WRITE_TEXT: WriteTextDocumentRenderer,
             }
             renderer = renderers[service_type]()
         self._renderer: Any = renderer
@@ -185,8 +191,12 @@ class EssayPipeline:
                     document = await self._provider.generate_course_work(request)  # type: ignore[arg-type]
                 elif self._profile.service_type is ServiceType.SUMMARY:
                     document = await self._provider.generate_summary(request)  # type: ignore[arg-type]
-                else:
+                elif self._profile.service_type is ServiceType.QUIZ:
                     document = await self._provider.generate_quiz(request)  # type: ignore[arg-type]
+                elif self._profile.service_type is ServiceType.WRITE_TEXT:
+                    document = await self._provider.generate_write_text(request)  # type: ignore[arg-type]
+                else:
+                    raise RuntimeError("unsupported document generation service")
             except Exception as exc:
                 await self._release_retryable(
                     order_id,
@@ -204,6 +214,8 @@ class EssayPipeline:
                     "section_count": (
                         len(document.chapters)
                         if self._profile.service_type is ServiceType.COURSE_WORK
+                        else len(document.blocks)
+                        if self._profile.service_type is ServiceType.WRITE_TEXT
                         else len(document.sections)
                         if self._profile.service_type is not ServiceType.QUIZ
                         else 0
@@ -262,6 +274,7 @@ class EssayPipeline:
                 ServiceType.COURSE_WORK,
                 ServiceType.SUMMARY,
                 ServiceType.QUIZ,
+                ServiceType.WRITE_TEXT,
             }:
                 pdf_messages = {
                     ServiceType.COURSE_WORK: {
@@ -279,6 +292,11 @@ class EssayPipeline:
                         "ru": "Не удалось безопасно подготовить PDF теста",
                         "en": "The quiz PDF could not be prepared safely",
                     },
+                    ServiceType.WRITE_TEXT: {
+                        "uz": "Matn PDF faylini xavfsiz tayyorlab bo‘lmadi",
+                        "ru": "Не удалось безопасно подготовить PDF текста",
+                        "en": "The text PDF could not be prepared safely",
+                    },
                 }[self._profile.service_type]
                 await self._mark_terminal(
                     order_id,
@@ -293,6 +311,7 @@ class EssayPipeline:
                     ServiceType.COURSE_WORK: "Course Work",
                     ServiceType.SUMMARY: "Summary",
                     ServiceType.QUIZ: "Quiz",
+                    ServiceType.WRITE_TEXT: "Write Text",
                 }[self._profile.service_type]
                 raise EssayTerminalError(f"{service_label} PDF conversion or validation failed")
 
@@ -382,7 +401,8 @@ class EssayPipeline:
             | IndependentWorkGenerationRequest
             | CourseWorkGenerationRequest
             | SummaryGenerationRequest
-            | QuizGenerationRequest,
+            | QuizGenerationRequest
+            | WriteTextGenerationRequest,
             list[str],
         ]
         | None
@@ -449,6 +469,20 @@ class EssayPipeline:
                     ),
                 )
                 return token, order.user_id, quiz_request, pending_keys
+            if self._profile.service_type is ServiceType.WRITE_TEXT:
+                write_request = WriteTextGenerationRequest(
+                    topic=str(order.normalized_request["topic"]),
+                    text_type=str(order.normalized_request["text_type"]),  # type: ignore[arg-type]
+                    style=str(order.normalized_request["style"]),  # type: ignore[arg-type]
+                    length=str(order.normalized_request["length"]),  # type: ignore[arg-type]
+                    language=str(order.normalized_request["language"]),  # type: ignore[arg-type]
+                    additional_requirements=(
+                        str(order.normalized_request["requirements"])
+                        if order.normalized_request.get("requirements")
+                        else None
+                    ),
+                )
+                return token, order.user_id, write_request, pending_keys
             common = {
                 "topic": str(order.normalized_request["topic"]),
                 "language": str(order.normalized_request["language"]),
@@ -693,6 +727,32 @@ class SummaryPipeline(EssayPipeline):
         )
 
 
+class WriteTextPipeline(EssayPipeline):
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        provider: AIProvider,
+        storage: Storage,
+        *,
+        temp_root: Path,
+        pdf_converter: PdfConverter,
+        renderer: WriteTextDocumentRenderer | None = None,
+        lease_seconds: int = 900,
+        pdf_timeout_seconds: int = 120,
+    ) -> None:
+        super().__init__(
+            session_factory,
+            provider,
+            storage,
+            temp_root=temp_root,
+            pdf_converter=pdf_converter,
+            renderer=renderer,
+            service_type=ServiceType.WRITE_TEXT,
+            lease_seconds=lease_seconds,
+            pdf_timeout_seconds=pdf_timeout_seconds,
+        )
+
+
 class QuizPipeline(EssayPipeline):
     def __init__(
         self,
@@ -813,6 +873,20 @@ async def cleanup_quiz_orphan_artifacts(
     )
 
 
+async def cleanup_write_text_orphan_artifacts(
+    session_factory: async_sessionmaker[AsyncSession],
+    storage: Storage,
+    *,
+    order_id: int,
+) -> bool:
+    return await cleanup_document_orphan_artifacts(
+        session_factory,
+        storage,
+        order_id=order_id,
+        service_type=ServiceType.WRITE_TEXT,
+    )
+
+
 async def mark_terminal_document_failure(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -924,6 +998,22 @@ async def mark_terminal_quiz_failure(
         session_factory,
         order_id=order_id,
         service_type=ServiceType.QUIZ,
+        error_code=error_code,
+        user_message=user_message,
+    )
+
+
+async def mark_terminal_write_text_failure(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    order_id: int,
+    error_code: str = "GENERATION_RETRIES_EXHAUSTED",
+    user_message: str = "Matnni tayyorlashda xatolik yuz berdi. Keyinroq qayta urinib ko‘ring.",
+) -> bool:
+    return await mark_terminal_document_failure(
+        session_factory,
+        order_id=order_id,
+        service_type=ServiceType.WRITE_TEXT,
         error_code=error_code,
         user_message=user_message,
     )

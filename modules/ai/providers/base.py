@@ -16,6 +16,7 @@ from modules.ai.independent_work_contracts import (
 )
 from modules.ai.quiz_contracts import QuizDocument, QuizGenerationRequest
 from modules.ai.summary_contracts import SummaryDocument, SummaryGenerationRequest
+from modules.ai.write_text_contracts import WriteTextDocument, WriteTextGenerationRequest
 
 
 class AIProvider(Protocol):
@@ -36,3 +37,7 @@ class AIProvider(Protocol):
     async def generate_summary(self, request: SummaryGenerationRequest) -> SummaryDocument: ...
 
     async def generate_quiz(self, request: QuizGenerationRequest) -> QuizDocument: ...
+
+    async def generate_write_text(
+        self, request: WriteTextGenerationRequest
+    ) -> WriteTextDocument: ...

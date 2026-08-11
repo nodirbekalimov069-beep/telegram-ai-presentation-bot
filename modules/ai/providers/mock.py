@@ -47,6 +47,13 @@ from modules.ai.summary_contracts import (
     materialize_summary_selection,
     source_sentences,
 )
+from modules.ai.write_text_contracts import (
+    WriteTextBlock,
+    WriteTextDocument,
+    WriteTextGenerationRequest,
+    write_text_requirement_content_terms,
+    validate_write_text_against_request,
+)
 
 _SECTION_TITLES = {
     "uz": (
@@ -545,3 +552,141 @@ class MockAIProvider:
             conclusion_indices=indices,
         )
         return materialize_summary_selection(selection, request=request)
+
+    async def generate_write_text(self, request: WriteTextGenerationRequest) -> WriteTextDocument:
+        paragraph_sets = {
+            "uz": (
+                "{topic} mavzusi foydalanuvchi maqsadini aniq belgilashdan boshlanadi. Mazmun asosiy g‘oyani tushunarli ifodalab, uning kundalik hayotdagi o‘rnini ochib beradi. Har bir fikr keyingi mulohazaga tabiiy o‘tish yaratgani sababli matn yaxlit va ravon o‘qiladi.",
+                "Mavzuning amaliy tomoni muammo, imkoniyat va kutilgan natijani o‘zaro bog‘lash orqali yoritiladi. Tanlangan yondashuv o‘quvchiga {topic} haqida faqat umumiy tasavvur emas, balki qo‘llash mumkin bo‘lgan aniq yo‘nalish beradi.",
+                "Mazmunni rivojlantirishda sabab va natija orasidagi aloqa ochiq ko‘rsatiladi. Bu usul asosiy fikrni ortiqcha takrorsiz kengaytirib, {topic} doirasidagi muhim jihatlarni bir-biridan farqlashga yordam beradi.",
+                "Tanlangan uslub so‘zlarni auditoriyaga mos, izchil va tabiiy tartibda joylashtiradi. Natijada {topic} haqidagi matn tushunarli ohangni saqlaydi, murakkab fikrlarni esa sodda mantiqiy bog‘lanishlar orqali bayon qiladi.",
+                "Amaliy foyda tavsiflangan g‘oyalarni bajariladigan harakat bilan bog‘lashda ko‘rinadi. O‘quvchi {topic} bo‘yicha qaysi jihatga e’tibor berish va fikrni qanday davom ettirish kerakligini mazmundan anglaydi.",
+                "Yakuniy qarash mavzuning asosiy yo‘nalishini umumlashtirib, yangi aloqasiz da’vo boshlamaydi. Shu tariqa {topic} bo‘yicha yaratilgan matn maqsad, mazmun va ohangni bir butun natijaga birlashtiradi.",
+            ),
+            "ru": (
+                "Тема {topic} начинается с ясного определения цели пользователя. Содержание понятно раскрывает главную мысль и показывает её практическое значение. Каждое положение создаёт естественный переход к следующему, поэтому текст читается связно и последовательно.",
+                "Практическая сторона темы раскрывается через связь проблемы, возможности и ожидаемого результата. Такой подход даёт читателю не только общее представление о {topic}, но и понятное направление для применения основной идеи.",
+                "При развитии содержания ясно показана связь между причиной и следствием. Это позволяет расширить главную мысль без лишних повторов и различить важные аспекты темы {topic}.",
+                "Выбранный стиль располагает слова в естественном и подходящем для аудитории порядке. В результате текст о {topic} сохраняет понятный тон и передаёт сложные мысли через логические связи.",
+                "Практическая польза проявляется в связи описанных идей с выполнимыми действиями. Читатель понимает, чему уделить внимание в теме {topic} и как последовательно продолжить рассуждение.",
+                "Итоговый взгляд обобщает основное направление темы и не начинает нового несвязанного утверждения. Поэтому текст о {topic} объединяет цель, содержание и тон в целостный результат.",
+            ),
+            "en": (
+                "The topic of {topic} begins with a clear statement of the user’s purpose. The content explains the central idea in accessible language and connects it with practical value. Each point creates a natural transition to the next, so the text reads as one coherent whole.",
+                "The practical dimension links the problem, the available opportunity, and the expected outcome. This approach gives the reader more than a general view of {topic}; it also provides a clear direction for applying the central idea.",
+                "The development makes the relationship between cause and outcome explicit. It expands the main point without filler or repetition and helps the reader distinguish the important aspects of {topic}.",
+                "The selected style arranges ideas in a natural order suited to the intended audience. As a result, the text about {topic} maintains an appropriate tone and presents complex points through clear logical connections.",
+                "Practical value appears when the described ideas are connected with actions that can be carried out. The reader can identify what deserves attention in {topic} and how the reasoning can progress coherently.",
+                "The closing perspective summarizes the main direction without introducing an unrelated claim. In this way, the text on {topic} combines purpose, content, and tone into a unified result.",
+            ),
+        }
+        headings = {
+            "uz": (
+                "Asosiy mazmun",
+                "Amaliy yo‘nalish",
+                "Foydali yondashuv",
+                "Mantiqiy bog‘lanish",
+                "Aniq ifoda",
+                "Yakuniy qarash",
+            ),
+            "ru": (
+                "Основное содержание",
+                "Практическое направление",
+                "Полезный подход",
+                "Логическая связь",
+                "Ясное изложение",
+                "Итоговый взгляд",
+            ),
+            "en": (
+                "Core content",
+                "Practical direction",
+                "Useful approach",
+                "Logical connection",
+                "Clear expression",
+                "Closing perspective",
+            ),
+        }[request.language]
+        count = {"short": 2, "medium": 4, "long": 6}[request.length]
+        paragraphs = [
+            value.format(topic=request.topic) for value in paragraph_sets[request.language][:count]
+        ]
+        style_openers = {
+            "uz": {
+                "simple": "Oddiy tilda",
+                "formal": "Rasmiy uslub asosida",
+                "academic": "Tahliliy nuqtai nazar asosida",
+                "creative": "Tasavvur qiling",
+            },
+            "ru": {
+                "simple": "Простыми словами",
+                "formal": "В официальном стиле",
+                "academic": "С аналитической точки зрения",
+                "creative": "Представьте себе",
+            },
+            "en": {
+                "simple": "In simple terms",
+                "formal": "In a formal style",
+                "academic": "From an analytical perspective",
+                "creative": "Imagine",
+            },
+        }
+        paragraphs[0] = f"{style_openers[request.language][request.style]}, {paragraphs[0]}"
+        requirement_sentence: str | None = None
+        if request.additional_requirements:
+            focus = " ".join(
+                write_text_requirement_content_terms(request.additional_requirements)[:4]
+            )
+            requirement_sentence = {
+                "uz": (
+                    f"{focus.capitalize()} amaliy harakatni kuchaytiradi va umumiy maqsadlarni "
+                    "kundalik hamkorlik bilan bog‘laydi."
+                ),
+                "ru": (
+                    f"{focus.capitalize()} усиливает практические действия и связывает общие цели "
+                    "с понятным сотрудничеством в повседневной работе."
+                ),
+                "en": (
+                    f"{focus.capitalize()} strengthens practical action and connects shared goals "
+                    "with clear cooperation in daily work."
+                ),
+            }[request.language]
+            paragraphs[0] = f"{paragraphs[0]} {requirement_sentence}"
+        if request.text_type == "article":
+            blocks = [
+                WriteTextBlock(heading=headings[index], paragraphs=[paragraph])
+                for index, paragraph in enumerate(paragraphs)
+            ]
+        elif request.text_type == "description":
+            blocks = [WriteTextBlock(heading=headings[0], paragraphs=paragraphs)]
+        elif request.text_type == "post":
+            cta = {
+                "uz": "Fikringizni ulashing va bugun boshlang.",
+                "ru": "Поделитесь мнением и начните сегодня.",
+                "en": "Share your thoughts and start today.",
+            }[request.language]
+            paragraphs[-1] = f"{paragraphs[-1]} {cta}"
+            blocks = [WriteTextBlock(heading=None, paragraphs=paragraphs)]
+        else:
+            greeting = {
+                "uz": "Hurmatli o‘quvchi",
+                "ru": "Уважаемый читатель",
+                "en": "Dear reader",
+            }[request.language]
+            closing = {
+                "uz": "Hurmat bilan, muallifdan samimiy va ezgu tilaklar.",
+                "ru": "С уважением, автор передаёт добрые пожелания.",
+                "en": "Kind regards, with thoughtful wishes from the author.",
+            }[request.language]
+            paragraphs[0] = f"{greeting}. {paragraphs[0]}"
+            paragraphs[-1] = f"{paragraphs[-1]} {closing}"
+            blocks = [WriteTextBlock(heading=None, paragraphs=paragraphs)]
+        document = WriteTextDocument(
+            title=request.topic,
+            language=request.language,
+            text_type=request.text_type,
+            style=request.style,
+            blocks=blocks,
+            requirement_evidence=[requirement_sentence] if requirement_sentence else [],
+            references=[],
+        )
+        return validate_write_text_against_request(document, request)

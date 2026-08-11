@@ -63,6 +63,13 @@ from modules.ai.summary_contracts import (
     materialize_summary_selection,
     validate_summary_selection,
 )
+from modules.ai.write_text_contracts import (
+    WriteTextDocument,
+    WriteTextGenerationRequest,
+    build_write_text_messages,
+    build_write_text_retry_message,
+    validate_write_text_against_request,
+)
 from modules.ai.presentation_agent import (
     AgentBackendContext,
     AgentReply,
@@ -124,6 +131,7 @@ class OpenAICompatibleProvider:
         messages: Iterable[ChatCompletionMessageParam],
         response_format: type[StructuredResponse],
         response_validator: Callable[[StructuredResponse], StructuredResponse] | None = None,
+        contract_retry_builder: Callable[[str], str] | None = None,
     ) -> StructuredResponse:
         request_messages = list(messages)
         system_content = request_messages[0].get("content") if request_messages else None
@@ -221,15 +229,18 @@ class OpenAICompatibleProvider:
                         raise AIContractError(
                             "AI provider repeatedly returned a response violating the request contract"
                         ) from exc
-                    correction = (
-                        build_quiz_retry_message(str(exc))
-                        if response_format.__name__ == QuizDocument.__name__
-                        else (
+                    if contract_retry_builder is not None:
+                        correction = contract_retry_builder(str(exc))
+                    elif response_format.__name__ == QuizDocument.__name__:
+                        correction = build_quiz_retry_message(str(exc))
+                    elif response_format.__name__ == WriteTextDocument.__name__:
+                        correction = build_write_text_retry_message(str(exc))
+                    else:
+                        correction = (
                             "The previous response failed schema validation or request-specific "
                             "contract validation. Return one corrected JSON object matching every "
                             "requested constraint."
                         )
-                    )
                     request_messages.append(
                         cast(
                             ChatCompletionMessageParam,
@@ -350,6 +361,17 @@ class OpenAICompatibleProvider:
             ),
             response_format=QuizDocument,
             response_validator=partial(validate_quiz_against_request, request=request),
+        )
+
+    async def generate_write_text(self, request: WriteTextGenerationRequest) -> WriteTextDocument:
+        return await self._request_structured(
+            messages=cast(
+                Iterable[ChatCompletionMessageParam],
+                build_write_text_messages(request),
+            ),
+            response_format=WriteTextDocument,
+            response_validator=partial(validate_write_text_against_request, request=request),
+            contract_retry_builder=partial(build_write_text_retry_message, request=request),
         )
 
     async def _request_json_object(

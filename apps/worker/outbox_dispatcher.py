@@ -28,6 +28,7 @@ async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
         cleanup_service_essay_artifacts,
         cleanup_service_summary_artifacts,
         cleanup_service_quiz_artifacts,
+        cleanup_service_write_text_artifacts,
         generate_presentation,
         generate_priority_presentation,
         generate_service_course,
@@ -35,6 +36,7 @@ async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
         generate_service_essay,
         generate_service_summary,
         generate_service_quiz,
+        generate_service_write_text,
         process_paid_order,
     )
 
@@ -88,6 +90,12 @@ async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
     async def publish_quiz_cleanup(event: OutboxEvent) -> None:
         cleanup_service_quiz_artifacts.send(_payload_int(event, "service_order_id"), event.id)
 
+    async def publish_write_text(event: OutboxEvent) -> None:
+        generate_service_write_text.send(_payload_int(event, "service_order_id"))
+
+    async def publish_write_text_cleanup(event: OutboxEvent) -> None:
+        cleanup_service_write_text_artifacts.send(_payload_int(event, "service_order_id"), event.id)
+
     publishers: dict[str, Publisher] = {
         "generation.requested": publish_generation,
         "payment.paid": publish_paid,
@@ -101,6 +109,8 @@ async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
         "service.summary.cleanup_requested": publish_summary_cleanup,
         "service.quiz.requested": publish_quiz,
         "service.quiz.cleanup_requested": publish_quiz_cleanup,
+        "service.write.requested": publish_write_text,
+        "service.write.cleanup_requested": publish_write_text_cleanup,
     }
     service = OutboxService()
     try:

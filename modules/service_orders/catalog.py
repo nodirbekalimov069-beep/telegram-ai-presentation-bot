@@ -5,6 +5,11 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any
 
+from modules.ai.write_text_contracts import (
+    validate_write_text_untrusted_input,
+    write_text_requirement_content_terms,
+)
+
 
 class ServiceType(StrEnum):
     ESSAY = "essay"
@@ -136,10 +141,12 @@ _SERVICE_CATALOG = {
             _text("topic"),
             _choice("text_type", ("article", "post", "description", "letter")),
             _choice("style", ("simple", "formal", "academic", "creative")),
-            _LENGTH,
-            _LANGUAGE,
+            _choice("length", ("short", "medium", "long")),
+            _choice("language", ("uz", "ru", "en")),
+            _text("requirements", maximum=1000, optional=True),
         ),
         "topic",
+        True,
     ),
     ServiceType.REWRITE: ServiceDefinition(
         ServiceType.REWRITE,
@@ -191,6 +198,19 @@ PRICING_CATEGORIES = (
 )
 
 
+def _validate_service_field_semantics(
+    service_type: ServiceType, field_name: str, value: Any
+) -> Any:
+    if service_type is not ServiceType.WRITE_TEXT or not value:
+        return value
+    if field_name not in {"topic", "requirements"}:
+        return value
+    text = validate_write_text_untrusted_input(str(value))
+    if field_name == "requirements" and len(write_text_requirement_content_terms(text)) < 2:
+        raise ValueError("requirements must contain at least two meaningful terms")
+    return value
+
+
 def validate_service_request(
     service_type: ServiceType | str,
     payload: dict[str, Any],
@@ -210,7 +230,10 @@ def validate_service_request(
                 normalized[field.name] = ""
                 continue
             raise ValueError(f"{field.name} is required")
-        normalized[field.name] = _normalize_field(field, payload[field.name])
+        normalized_value = _normalize_field(field, payload[field.name])
+        normalized[field.name] = _validate_service_field_semantics(
+            canonical_type, field.name, normalized_value
+        )
     return normalized
 
 
@@ -219,11 +242,13 @@ def validate_field_value(
     field_name: str,
     raw: Any,
 ) -> Any:
-    definition = SERVICE_CATALOG[ServiceType(service_type)]
+    canonical_type = ServiceType(service_type)
+    definition = SERVICE_CATALOG[canonical_type]
     field = next((item for item in definition.fields if item.name == field_name), None)
     if field is None:
         raise ValueError("unknown service field")
-    return _normalize_field(field, raw)
+    normalized = _normalize_field(field, raw)
+    return _validate_service_field_semantics(canonical_type, field_name, normalized)
 
 
 def _normalize_field(field: FieldSpec, raw: Any) -> Any:

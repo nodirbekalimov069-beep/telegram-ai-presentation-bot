@@ -147,6 +147,48 @@ def test_summary_has_complete_uz_ru_en_locale_parity() -> None:
     assert "valid" not in uz_created.casefold()
 
 
+def test_write_text_confirmation_locales_and_exact_rollout_policy() -> None:
+    localizer = Localizer.load_default()
+    production = {
+        ServiceType.ESSAY,
+        ServiceType.INDEPENDENT_WORK,
+        ServiceType.COURSE_WORK,
+        ServiceType.SUMMARY,
+        ServiceType.QUIZ,
+        ServiceType.WRITE_TEXT,
+    }
+    assert {
+        item for item, definition in SERVICE_CATALOG.items() if definition.production_ready
+    } == production
+    assert {
+        item for item, definition in SERVICE_CATALOG.items() if not definition.production_ready
+    } == {ServiceType.REWRITE, ServiceType.TRANSLATE, ServiceType.DOCUMENT}
+    keyboard = service_confirmation_keyboard(
+        token="write-token",
+        language="uz",
+        localizer=localizer,
+        service_type=ServiceType.WRITE_TEXT,
+    )
+    buttons = [button for row in keyboard.inline_keyboard for button in row]
+    assert (
+        next(button for button in buttons if button.callback_data == "svs:write-token").text
+        == "✅ Tayyorlash"
+    )
+    for language in ("uz", "ru", "en"):
+        for key in (
+            "service.write",
+            "service.write_notice",
+            "service.write_created",
+            "service.field.topic",
+            "service.field.text_type",
+            "service.field.style",
+            "service.field.length",
+            "service.field.language",
+            "service.field.requirements",
+        ):
+            assert localizer.text(language, key) != key
+
+
 def test_universal_service_fsm_is_small_and_extensible() -> None:
     assert {state.state.split(":")[-1] for state in ServiceFlow} == {
         "collecting",
