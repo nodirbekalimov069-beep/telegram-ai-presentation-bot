@@ -1,5 +1,7 @@
 """Deterministic AI provider used by local development and tests."""
 
+from typing import TypedDict
+
 from modules.ai.contracts import (
     ContentGenerationRequest,
     GeneratedContent,
@@ -29,6 +31,13 @@ from modules.ai.independent_work_contracts import (
     IndependentWorkGenerationRequest,
     IndependentWorkSection,
     validate_independent_work_against_request,
+)
+from modules.ai.quiz_contracts import (
+    QuizAnswer,
+    QuizDocument,
+    QuizGenerationRequest,
+    QuizQuestion,
+    validate_quiz_against_request,
 )
 from modules.ai.summary_contracts import (
     SummaryDocument,
@@ -74,6 +83,17 @@ _SECTION_TITLES = {
         "Conclusion",
     ),
 }
+
+
+class _QuizLabels(TypedDict):
+    title: str
+    instructions: str
+    question: str
+    case: str
+    correct: str
+    wrong: tuple[str, ...]
+    explanation: str
+    requirement: str
 
 
 class MockAIProvider:
@@ -153,6 +173,93 @@ class MockAIProvider:
                 )
             )
         return GeneratedContent(title=request.title, slides=slides)
+
+    async def generate_quiz(self, request: QuizGenerationRequest) -> QuizDocument:
+        labels_by_language: dict[str, _QuizLabels] = {
+            "uz": {
+                "title": f"{request.topic} bo‘yicha quiz",
+                "instructions": "Har bir savol uchun faqat bitta eng to‘g‘ri variantni tanlang.",
+                "question": "bo‘yicha amaliy vaziyatda yechimni tekshirish uchun qaysi yondashuv mos",
+                "case": "holat",
+                "correct": "Jarayonni bosqichlarga ajratish",
+                "wrong": (
+                    "Natijani tekshirmaslik",
+                    "Faqat taxmin bilan ishlash",
+                    "Muammoni e’tiborsiz qoldirish",
+                    "Nazoratni butunlay bekor qilish",
+                ),
+                "explanation": "Jarayonni bosqichlarga ajratish yechimni nazorat qilish va natijani tekshirish imkonini beradi.",
+                "requirement": "Amaliy vaziyatlar savollarda yechim va natijani tekshirish orqali qo‘llanadi",
+            },
+            "ru": {
+                "title": f"Тест по теме {request.topic}",
+                "instructions": "Для каждого вопроса выберите только один наиболее точный вариант ответа.",
+                "question": "какой подход подходит для проверки решения в практической ситуации",
+                "case": "ситуация",
+                "correct": "Разделить процесс на последовательные этапы",
+                "wrong": (
+                    "Не проверять результат",
+                    "Работать только по догадке",
+                    "Игнорировать проблему",
+                    "Полностью отказаться от контроля",
+                ),
+                "explanation": "Разделение процесса на этапы позволяет контролировать решение и проверять полученный результат.",
+                "requirement": "Практические ситуации применяются через проверку решения и оценку результата",
+            },
+            "en": {
+                "title": f"Quiz on {request.topic}",
+                "instructions": "Choose exactly one best answer for each question in this quiz.",
+                "question": "which approach is suitable for checking a solution in a practical situation",
+                "case": "scenario",
+                "correct": "Divide the process into coherent stages",
+                "wrong": (
+                    "Accept the result without checking",
+                    "Work only from a guess",
+                    "Ignore the problem",
+                    "Remove every form of oversight",
+                ),
+                "explanation": "Dividing the process into stages supports controlled reasoning and independent checking of the result.",
+                "requirement": "Practical situations are applied through a solution check and result assessment",
+            },
+        }
+        labels = labels_by_language[request.language]
+        wrong = labels["wrong"]
+        questions: list[QuizQuestion] = []
+        for index in range(1, request.question_count + 1):
+            options = [
+                f"{labels['correct']} — {index}",
+                *[f"{value} — {index}" for value in wrong[: request.option_count - 1]],
+            ]
+            questions.append(
+                QuizQuestion(
+                    number=index,
+                    text=f"{request.topic}: {labels['case']} {index}, {labels['question']}?",
+                    options=options,
+                    correct_answer=options[0],
+                    explanation=str(labels["explanation"]),
+                    citation_indices=[],
+                )
+            )
+        document = QuizDocument(
+            title=str(labels["title"]),
+            topic=request.topic,
+            language=request.language,
+            difficulty=request.difficulty,
+            show_answer_key=request.answer_key,
+            instructions=str(labels["instructions"]),
+            questions=questions,
+            answer_key=[
+                QuizAnswer(question_number=item.number, correct_answer=item.correct_answer)
+                for item in questions
+            ],
+            requirement_evidence=(
+                [f"{request.additional_requirements}. {labels['requirement']}."]
+                if request.additional_requirements
+                else []
+            ),
+            references=[],
+        )
+        return validate_quiz_against_request(document, request)
 
     async def generate_essay(self, request: EssayGenerationRequest) -> EssayDocument:
         section_count = {"short": 2, "medium": 4, "long": 6}[request.length]

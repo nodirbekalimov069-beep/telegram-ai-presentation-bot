@@ -48,6 +48,13 @@ from modules.ai.independent_work_contracts import (
     build_independent_work_messages,
     materialize_and_validate_independent_work,
 )
+from modules.ai.quiz_contracts import (
+    QuizDocument,
+    QuizGenerationRequest,
+    build_quiz_messages,
+    build_quiz_retry_message,
+    validate_quiz_against_request,
+)
 from modules.ai.summary_contracts import (
     SummaryDocument,
     SummaryGenerationRequest,
@@ -67,6 +74,15 @@ _TRANSIENT_ERRORS = (APIConnectionError, APITimeoutError, InternalServerError, R
 _CONTENT_BATCH_SIZE = 5
 _MAX_COMPLETION_TOKENS = 8192
 logger = logging.getLogger(__name__)
+
+
+def _validation_error_summary(error: ValidationError) -> str:
+    """Return bounded schema diagnostics without echoing rejected model values."""
+    summaries: list[str] = []
+    for item in error.errors(include_url=False, include_context=False, include_input=False):
+        location = ".".join(str(part) for part in item["loc"])
+        summaries.append(f"{location or '<root>'}: {item['msg']} ({item['type']})")
+    return "; ".join(summaries)[:1000]
 
 
 class OpenAICompatibleProvider:
@@ -148,15 +164,20 @@ class OpenAICompatibleProvider:
                     raise AIContractError(
                         "AI provider repeatedly returned an invalid structured response"
                     ) from exc
+                if response_format.__name__ == "QuizDocument":
+                    correction_message = build_quiz_retry_message(str(exc))
+                else:
+                    correction_message = (
+                        "The previous response failed schema validation. "
+                        "Return one corrected JSON object matching the required schema. "
+                        f"Schema failures: {_validation_error_summary(exc)}"
+                    )
                 request_messages.append(
                     cast(
                         ChatCompletionMessageParam,
                         {
                             "role": "system",
-                            "content": (
-                                "The previous response failed schema validation. "
-                                "Return one corrected JSON object matching the required schema."
-                            ),
+                            "content": correction_message,
                         },
                     )
                 )
@@ -200,17 +221,21 @@ class OpenAICompatibleProvider:
                         raise AIContractError(
                             "AI provider repeatedly returned a response violating the request contract"
                         ) from exc
+                    correction = (
+                        build_quiz_retry_message(str(exc))
+                        if response_format.__name__ == QuizDocument.__name__
+                        else (
+                            "The previous response failed schema validation or request-specific "
+                            "contract validation. Return one corrected JSON object matching every "
+                            "requested constraint."
+                        )
+                    )
                     request_messages.append(
                         cast(
                             ChatCompletionMessageParam,
                             {
                                 "role": "system",
-                                "content": (
-                                    "The previous response failed schema validation or "
-                                    "request-specific contract validation. Return one corrected "
-                                    "JSON object matching every requested constraint. Failure: "
-                                    f"{exc}"
-                                ),
+                                "content": correction,
                             },
                         )
                     )
@@ -316,6 +341,16 @@ class OpenAICompatibleProvider:
             response_validator=partial(validate_summary_selection, request=request),
         )
         return materialize_summary_selection(selection, request=request)
+
+    async def generate_quiz(self, request: QuizGenerationRequest) -> QuizDocument:
+        return await self._request_structured(
+            messages=cast(
+                Iterable[ChatCompletionMessageParam],
+                build_quiz_messages(request),
+            ),
+            response_format=QuizDocument,
+            response_validator=partial(validate_quiz_against_request, request=request),
+        )
 
     async def _request_json_object(
         self,

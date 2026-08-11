@@ -68,6 +68,8 @@ class OutboxService:
                 "service.essay.cleanup_requested",
                 "service.independent.cleanup_requested",
                 "service.course.cleanup_requested",
+                "service.summary.cleanup_requested",
+                "service.quiz.cleanup_requested",
             }
             publisher = publishers.get(event.event_type)
             if publisher is None:

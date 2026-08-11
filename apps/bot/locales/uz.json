@@ -204,5 +204,7 @@
   "service.summary.sections": "Bo‘limlar",
   "orders.independent_artifact_caption": "📎 Mustaqil ish — {artifact}",
   "orders.course_artifact_caption": "📎 Kurs ishi — {artifact}",
-  "orders.summary_artifact_caption": "📎 Konspekt — {artifact}"
+  "orders.summary_artifact_caption": "📎 Konspekt — {artifact}",
+  "service.quiz_notice": "🧠 Quiz mavzusini kiriting. Generatsiya faqat ✅ Tayyorlashni bosganingizdan keyin boshlanadi.",
+  "service.quiz_created": "⏳ Quizingiz tayyorlanmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi."
 }

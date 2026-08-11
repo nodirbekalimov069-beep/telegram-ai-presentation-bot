@@ -32,6 +32,7 @@ EXPECTED_FIELDS = {
         "option_count",
         "answer_key",
         "language",
+        "requirements",
     ),
     ServiceType.WRITE_TEXT: ("topic", "text_type", "style", "length", "language"),
     ServiceType.REWRITE: ("text", "mode"),
@@ -52,6 +53,7 @@ def test_catalog_defines_all_requested_services_and_fields() -> None:
                 ServiceType.INDEPENDENT_WORK,
                 ServiceType.COURSE_WORK,
                 ServiceType.SUMMARY,
+                ServiceType.QUIZ,
             }
         )
         assert definition.large_job is (service_type is ServiceType.COURSE_WORK)
@@ -106,14 +108,18 @@ def test_choice_fields_have_short_deterministic_values() -> None:
                 assert all(value.isascii() and len(value) <= 20 for value in field.options)
 
 
-def test_summary_is_the_only_new_production_document_profile() -> None:
-    assert {"essay", "independent", "course", "summary"} == PRODUCTION_DOCUMENT_SERVICE_TYPES
-    profile = document_service_profile(ServiceType.SUMMARY)
-    assert profile.artifact_stem == "konspekt"
-    assert profile.requested_event == "service.summary.requested"
-    assert profile.cleanup_event == "service.summary.cleanup_requested"
+def test_quiz_is_the_only_new_production_document_profile() -> None:
+    assert {"essay", "independent", "course", "summary", "quiz"} == (
+        PRODUCTION_DOCUMENT_SERVICE_TYPES
+    )
+    summary = document_service_profile(ServiceType.SUMMARY)
+    assert summary.artifact_stem == "konspekt"
+    quiz = document_service_profile(ServiceType.QUIZ)
+    assert quiz.artifact_stem == "quiz"
+    assert quiz.requested_event == "service.quiz.requested"
+    assert quiz.cleanup_event == "service.quiz.cleanup_requested"
     with pytest.raises(ValueError):
-        document_service_profile(ServiceType.QUIZ)
+        document_service_profile(ServiceType.WRITE_TEXT)
 
 
 def test_pricing_catalog_is_centralized_and_does_not_invent_unknown_prices() -> None:

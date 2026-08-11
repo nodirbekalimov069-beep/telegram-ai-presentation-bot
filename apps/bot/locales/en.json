@@ -204,5 +204,7 @@
   "service.summary.sections": "Sections",
   "orders.independent_artifact_caption": "📎 Independent work — {artifact}",
   "orders.course_artifact_caption": "📎 Course paper — {artifact}",
-  "orders.summary_artifact_caption": "📎 Summary notes — {artifact}"
+  "orders.summary_artifact_caption": "📎 Summary notes — {artifact}",
+  "service.quiz_notice": "🧠 Enter the quiz topic. Generation starts only after you press ✅ Prepare.",
+  "service.quiz_created": "⏳ Your quiz is being prepared. An editable DOCX and validated PDF will be sent when ready."
 }

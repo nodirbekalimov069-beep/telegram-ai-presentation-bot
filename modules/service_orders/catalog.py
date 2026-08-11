@@ -123,8 +123,10 @@ _SERVICE_CATALOG = {
                 options=("yes", "no"),
             ),
             _LANGUAGE,
+            _REQUIREMENTS,
         ),
         "topic",
+        production_ready=True,
     ),
     ServiceType.WRITE_TEXT: ServiceDefinition(
         ServiceType.WRITE_TEXT,

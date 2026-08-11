@@ -14,6 +14,7 @@ from modules.ai.independent_work_contracts import (
     IndependentWorkDocument,
     IndependentWorkGenerationRequest,
 )
+from modules.ai.quiz_contracts import QuizDocument, QuizGenerationRequest
 from modules.ai.summary_contracts import SummaryDocument, SummaryGenerationRequest
 
 
@@ -33,3 +34,5 @@ class AIProvider(Protocol):
     ) -> CourseWorkDocument: ...
 
     async def generate_summary(self, request: SummaryGenerationRequest) -> SummaryDocument: ...
+
+    async def generate_quiz(self, request: QuizGenerationRequest) -> QuizDocument: ...

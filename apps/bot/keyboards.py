@@ -112,6 +112,7 @@ def service_confirmation_keyboard(
                         ServiceType.INDEPENDENT_WORK,
                         ServiceType.COURSE_WORK,
                         ServiceType.SUMMARY,
+                        ServiceType.QUIZ,
                     }
                     else "service.submit",
                 ),

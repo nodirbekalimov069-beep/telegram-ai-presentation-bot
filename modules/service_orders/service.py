@@ -178,6 +178,22 @@ class ServiceOrderService:
             idempotency_key=idempotency_key,
         )
 
+    async def create_quiz_order(
+        self,
+        session: AsyncSession,
+        *,
+        telegram_user_id: int,
+        request_payload: dict[str, Any],
+        idempotency_key: str,
+    ) -> ServiceOrder:
+        return await self._create_production_document_order(
+            session,
+            telegram_user_id=telegram_user_id,
+            service_type=ServiceType.QUIZ,
+            request_payload=request_payload,
+            idempotency_key=idempotency_key,
+        )
+
     async def _create_production_document_order(
         self,
         session: AsyncSession,

@@ -82,6 +82,11 @@ _CAPTIONS = {
             "pdf": "✅ Summary notes ready — PDF",
         },
     },
+    ServiceType.QUIZ: {
+        "uz": {"docx": "✅ Quiz tayyor — DOCX", "pdf": "✅ Quiz tayyor — PDF"},
+        "ru": {"docx": "✅ Тест готов — DOCX", "pdf": "✅ Тест готов — PDF"},
+        "en": {"docx": "✅ Quiz ready — DOCX", "pdf": "✅ Quiz ready — PDF"},
+    },
 }
 
 
@@ -458,6 +463,24 @@ class TelegramSummaryDelivery(TelegramEssayDelivery):
         )
 
 
+class TelegramQuizDelivery(TelegramEssayDelivery):
+    def __init__(
+        self,
+        *,
+        storage: Storage,
+        work_root: Path,
+        max_upload_bytes: int = 49_000_000,
+        lease_seconds: int = 300,
+    ) -> None:
+        super().__init__(
+            storage=storage,
+            work_root=work_root,
+            max_upload_bytes=max_upload_bytes,
+            lease_seconds=lease_seconds,
+            service_type=ServiceType.QUIZ,
+        )
+
+
 async def mark_terminal_document_delivery_failure(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -535,4 +558,14 @@ async def mark_terminal_summary_delivery_failure(
         session_factory,
         service_order_id=service_order_id,
         service_type=ServiceType.SUMMARY,
+    )
+
+
+async def mark_terminal_quiz_delivery_failure(
+    session_factory: async_sessionmaker[AsyncSession], *, service_order_id: int
+) -> bool:
+    return await mark_terminal_document_delivery_failure(
+        session_factory,
+        service_order_id=service_order_id,
+        service_type=ServiceType.QUIZ,
     )

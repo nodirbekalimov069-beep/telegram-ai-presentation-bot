@@ -40,6 +40,10 @@ DOCUMENT_SERVICE_PROFILES = {
         service_type=ServiceType.SUMMARY,
         artifact_stem="konspekt",
     ),
+    ServiceType.QUIZ: DocumentServiceProfile(
+        service_type=ServiceType.QUIZ,
+        artifact_stem="quiz",
+    ),
 }
 PRODUCTION_DOCUMENT_SERVICE_TYPES = frozenset(
     service_type.value for service_type in DOCUMENT_SERVICE_PROFILES

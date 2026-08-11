@@ -231,7 +231,10 @@ async def test_outline_recovers_from_one_malformed_structured_response() -> None
         )
 
     route = respx.post("https://api.example.test/v1/chat/completions").mock(
-        side_effect=[response("{}"), response(json.dumps(valid_outline))]
+        side_effect=[
+            response(json.dumps({"title": "TOP-SECRET-REJECTED-VALUE"})),
+            response(json.dumps(valid_outline)),
+        ]
     )
     provider = OpenAICompatibleProvider(
         base_url="https://api.example.test/v1",
@@ -258,6 +261,8 @@ async def test_outline_recovers_from_one_malformed_structured_response() -> None
     assert result.title == "AI asoslari"
     assert route.call_count == 2
     assert "schema validation" in second_request["messages"][-1]["content"]
+    assert "slides" in second_request["messages"][-1]["content"]
+    assert "TOP-SECRET-REJECTED-VALUE" not in second_request["messages"][-1]["content"]
 
 
 @pytest.mark.asyncio
