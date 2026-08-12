@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 import math
+import unicodedata
 from collections.abc import Callable, Iterable
 from functools import partial
 from typing import TypeVar, cast
@@ -63,6 +64,7 @@ from modules.ai.rewrite_contracts import (
     materialize_and_validate_rewrite,
     validate_rewrite_selection,
 )
+from modules.ai.semantic_risk import SemanticRiskBoundary, enforce_semantic_risk
 from modules.ai.summary_contracts import (
     SummaryDocument,
     SummaryGenerationRequest,
@@ -70,6 +72,16 @@ from modules.ai.summary_contracts import (
     build_summary_messages,
     materialize_summary_selection,
     validate_summary_selection,
+)
+from modules.ai.translation_contracts import (
+    TranslationDocument,
+    TranslationGenerationRequest,
+    TranslationSelection,
+    build_translation_messages,
+    materialize_and_validate_translation,
+    source_translation_segments,
+    translation_text_is_language_neutral,
+    validate_translation_selection,
 )
 from modules.ai.write_text_contracts import (
     WriteTextDocument,
@@ -89,6 +101,90 @@ _TRANSIENT_ERRORS = (APIConnectionError, APITimeoutError, InternalServerError, R
 _CONTENT_BATCH_SIZE = 5
 _MAX_COMPLETION_TOKENS = 8192
 logger = logging.getLogger(__name__)
+
+_UZBEK_CYRILLIC_TO_LATIN = str.maketrans(
+    {
+        "Ў": "O‘",
+        "ў": "o‘",
+        "Қ": "Q",
+        "қ": "q",
+        "Ғ": "G‘",
+        "ғ": "g‘",
+        "Ҳ": "H",
+        "ҳ": "h",
+        "Ё": "Yo",
+        "ё": "yo",
+        "Ж": "J",
+        "ж": "j",
+        "Ц": "S",
+        "ц": "s",
+        "Ч": "Ch",
+        "ч": "ch",
+        "Ш": "Sh",
+        "ш": "sh",
+        "Щ": "Sh",
+        "щ": "sh",
+        "Ю": "Yu",
+        "ю": "yu",
+        "Я": "Ya",
+        "я": "ya",
+        "А": "A",
+        "а": "a",
+        "Б": "B",
+        "б": "b",
+        "В": "V",
+        "в": "v",
+        "Г": "G",
+        "г": "g",
+        "Д": "D",
+        "д": "d",
+        "Е": "E",
+        "е": "e",
+        "З": "Z",
+        "з": "z",
+        "И": "I",
+        "и": "i",
+        "Й": "Y",
+        "й": "y",
+        "К": "K",
+        "к": "k",
+        "Л": "L",
+        "л": "l",
+        "М": "M",
+        "м": "m",
+        "Н": "N",
+        "н": "n",
+        "О": "O",
+        "о": "o",
+        "П": "P",
+        "п": "p",
+        "Р": "R",
+        "р": "r",
+        "С": "S",
+        "с": "s",
+        "Т": "T",
+        "т": "t",
+        "У": "U",
+        "у": "u",
+        "Ф": "F",
+        "ф": "f",
+        "Х": "X",
+        "х": "x",
+        "Ъ": "",
+        "ъ": "",
+        "Ь": "",
+        "ь": "",
+        "Э": "E",
+        "э": "e",
+    }
+)
+
+
+def _semantic_risk_source(text: str, source_language: str | None) -> str:
+    """Normalize Uzbek Cyrillic for the pinned NLI model, not for app invariants."""
+    if source_language == "uz" and any("CYRILLIC" in unicodedata.name(c, "") for c in text):
+        return text.translate(_UZBEK_CYRILLIC_TO_LATIN)
+    return text
 
 
 def _validation_error_summary(error: ValidationError) -> str:
@@ -110,6 +206,7 @@ class OpenAICompatibleProvider:
         timeout_seconds: float = 60,
         max_retries: int = 3,
         retry_base_delay_seconds: float = 0.5,
+        semantic_risk_boundary: SemanticRiskBoundary | None = None,
     ) -> None:
         if not api_key:
             raise ValueError("AI API key is required")
@@ -123,6 +220,7 @@ class OpenAICompatibleProvider:
         self._model = model
         self._max_retries = max_retries
         self._retry_base_delay_seconds = retry_base_delay_seconds
+        self._semantic_risk_boundary = semantic_risk_boundary
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=self._base_url,
@@ -182,7 +280,8 @@ class OpenAICompatibleProvider:
             except ValidationError as exc:
                 if not retry_invalid_response:
                     raise AIContractError(
-                        "AI provider returned an invalid structured response"
+                        f"AI provider returned invalid {response_format.__name__}: "
+                        f"{_validation_error_summary(exc)}"
                     ) from exc
                 if attempt >= self._max_retries:
                     raise AIContractError(
@@ -406,6 +505,62 @@ class OpenAICompatibleProvider:
             temperature=0.0,
         )
         return materialize_and_validate_rewrite(selection, request=request)
+
+    async def generate_translation(
+        self, request: TranslationGenerationRequest
+    ) -> TranslationDocument:
+        # The provider generates candidate text only. Its graphs, verdicts or
+        # confidence claims are intentionally outside the acceptance boundary.
+        if self._semantic_risk_boundary is None:
+            raise AIContractError("independent semantic risk boundary is unavailable")
+        messages = cast(Iterable[ChatCompletionMessageParam], build_translation_messages(request))
+        last_risk_error: AIContractError | None = None
+        for risk_attempt in range(2):
+            selection = await self._request_structured(
+                messages=messages,
+                response_format=TranslationSelection,
+                response_validator=partial(validate_translation_selection, request=request),
+                retry_invalid_response=True,
+                temperature=0.0,
+            )
+            source_segments = source_translation_segments(request.text)
+            try:
+                for (_, source_text), candidate in zip(
+                    source_segments, selection.segments, strict=True
+                ):
+                    if source_text == candidate.text:
+                        if translation_text_is_language_neutral(source_text):
+                            continue
+                        raise AIContractError("non-neutral translation candidate was unchanged")
+                    try:
+                        normalized_source = _semantic_risk_source(
+                            source_text, request.source_language
+                        )
+                        risk = await self._semantic_risk_boundary.assess(
+                            normalized_source,
+                            candidate.text,
+                        )
+                        reverse_risk = await self._semantic_risk_boundary.assess(
+                            candidate.text,
+                            normalized_source,
+                        )
+                    except AIContractError:
+                        raise
+                    except Exception as exc:
+                        raise AIContractError(
+                            "independent semantic risk boundary is unavailable"
+                        ) from exc
+                    enforce_semantic_risk(risk)
+                    enforce_semantic_risk(reverse_risk)
+            except AIContractError as exc:
+                last_risk_error = exc
+                if risk_attempt == 0:
+                    continue
+                raise AIContractError(
+                    "translation repeatedly failed independent semantic risk validation"
+                ) from exc
+            return materialize_and_validate_translation(selection, request=request)
+        raise AIContractError("translation semantic risk validation failed") from last_risk_error
 
     async def _request_json_object(
         self,

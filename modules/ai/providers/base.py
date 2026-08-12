@@ -17,6 +17,7 @@ from modules.ai.independent_work_contracts import (
 from modules.ai.quiz_contracts import QuizDocument, QuizGenerationRequest
 from modules.ai.rewrite_contracts import RewriteDocument, RewriteGenerationRequest
 from modules.ai.summary_contracts import SummaryDocument, SummaryGenerationRequest
+from modules.ai.translation_contracts import TranslationDocument, TranslationGenerationRequest
 from modules.ai.write_text_contracts import WriteTextDocument, WriteTextGenerationRequest
 
 
@@ -44,3 +45,7 @@ class AIProvider(Protocol):
     ) -> WriteTextDocument: ...
 
     async def generate_rewrite(self, request: RewriteGenerationRequest) -> RewriteDocument: ...
+
+    async def generate_translation(
+        self, request: TranslationGenerationRequest
+    ) -> TranslationDocument: ...

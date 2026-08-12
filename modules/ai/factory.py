@@ -6,6 +6,7 @@ from core.config import Settings
 from modules.ai.providers.base import AIProvider
 from modules.ai.providers.mock import MockAIProvider
 from modules.ai.providers.openai_compatible import OpenAICompatibleProvider
+from modules.ai.semantic_risk import OnnxSemanticRiskBoundary
 
 
 def build_ai_provider(settings: Settings) -> AIProvider:
@@ -18,6 +19,10 @@ def build_ai_provider(settings: Settings) -> AIProvider:
         timeout_seconds=settings.ai_timeout_seconds,
         max_retries=settings.ai_max_retries,
         retry_base_delay_seconds=settings.ai_retry_base_delay_seconds,
+        semantic_risk_boundary=OnnxSemanticRiskBoundary(
+            model_dir=settings.semantic_risk_model_dir,
+            timeout_seconds=settings.semantic_risk_timeout_seconds,
+        ),
     )
 
 

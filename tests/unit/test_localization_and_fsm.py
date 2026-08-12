@@ -35,6 +35,18 @@ def test_all_locales_have_identical_keys() -> None:
     assert set(localizer.catalog("en")) == uz_keys
 
 
+def test_translation_notices_make_the_same_honest_narrowed_contract_claims() -> None:
+    localizer = Localizer.load_default()
+    notices = {
+        language: localizer.text(language, "service.translate_notice").casefold()
+        for language in ("uz", "ru", "en")
+    }
+    assert "yuqori ishonchli" in notices["uz"] and "kafolati emas" in notices["uz"]
+    assert "высоконадёжный" in notices["ru"] and "не гарантия" in notices["ru"]
+    assert "high-confidence" in notices["en"] and "not a guarantee" in notices["en"]
+    assert all("100%" not in notice for notice in notices.values())
+
+
 def test_unknown_locale_falls_back_to_uzbek() -> None:
     localizer = Localizer.load_default()
 

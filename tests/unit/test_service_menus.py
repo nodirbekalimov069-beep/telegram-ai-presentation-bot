@@ -159,13 +159,14 @@ def test_write_text_confirmation_locales_and_exact_rollout_policy() -> None:
         ServiceType.QUIZ,
         ServiceType.WRITE_TEXT,
         ServiceType.REWRITE,
+        ServiceType.TRANSLATE,
     }
     assert {
         item for item, definition in SERVICE_CATALOG.items() if definition.production_ready
     } == production
     assert {
         item for item, definition in SERVICE_CATALOG.items() if not definition.production_ready
-    } == {ServiceType.TRANSLATE, ServiceType.DOCUMENT}
+    } == {ServiceType.DOCUMENT}
     keyboard = service_confirmation_keyboard(
         token="write-token",
         language="uz",
@@ -246,13 +247,14 @@ def test_rewrite_confirmation_and_exact_next_rollout_policy() -> None:
         ServiceType.QUIZ,
         ServiceType.WRITE_TEXT,
         ServiceType.REWRITE,
+        ServiceType.TRANSLATE,
     }
     assert {
         item for item, definition in SERVICE_CATALOG.items() if definition.production_ready
     } == production
     assert {
         item for item, definition in SERVICE_CATALOG.items() if not definition.production_ready
-    } == {ServiceType.TRANSLATE, ServiceType.DOCUMENT}
+    } == {ServiceType.DOCUMENT}
     keyboard = service_confirmation_keyboard(
         token="rewrite-token",
         language="uz",

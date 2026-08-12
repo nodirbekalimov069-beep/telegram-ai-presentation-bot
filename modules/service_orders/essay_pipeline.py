@@ -1,12 +1,13 @@
 """Durable, lease-protected Referat generation pipeline."""
 
 import asyncio
+import logging
 import shutil
 from contextlib import suppress
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -20,6 +21,10 @@ from modules.ai.independent_work_contracts import IndependentWorkGenerationReque
 from modules.ai.quiz_contracts import QuizGenerationRequest
 from modules.ai.rewrite_contracts import RewriteGenerationRequest
 from modules.ai.summary_contracts import SummaryGenerationRequest
+from modules.ai.translation_contracts import (
+    TranslationGenerationRequest,
+    translation_protected_association_score,
+)
 from modules.ai.write_text_contracts import WriteTextGenerationRequest
 from modules.ai.providers.base import AIProvider
 from modules.files.storage import Storage
@@ -31,12 +36,19 @@ from modules.service_orders.independent_work_documents import IndependentWorkDoc
 from modules.service_orders.quiz_documents import QuizDocumentRenderer
 from modules.service_orders.rewrite_documents import RewriteDocumentRenderer
 from modules.service_orders.summary_documents import SummaryDocumentRenderer
+from modules.service_orders.translation_documents import (
+    TranslationDocumentRenderer,
+    normalized_translation_body,
+    translation_artifact_parity_score,
+    translation_body_digest,
+)
 from modules.service_orders.write_text_documents import WriteTextDocumentRenderer
 from modules.service_orders.models import ServiceOrder
 from modules.service_orders.service import ServiceOrderStatus
 from modules.presentations.pdf import validate_text_pdf
 
 PdfConverter = Callable[..., Awaitable[Path]]
+logger = logging.getLogger(__name__)
 
 
 def _promote_pending_artifacts(order: ServiceOrder) -> list[str]:
@@ -120,6 +132,7 @@ class EssayPipeline:
             | QuizDocumentRenderer
             | WriteTextDocumentRenderer
             | RewriteDocumentRenderer
+            | TranslationDocumentRenderer
             | None
         ) = None,
         service_type: ServiceType = ServiceType.ESSAY,
@@ -142,6 +155,7 @@ class EssayPipeline:
             ServiceType.QUIZ: "Quiz savollarini yaratib bo‘lmadi",
             ServiceType.WRITE_TEXT: "Matnni yaratib bo‘lmadi",
             ServiceType.REWRITE: "Matnni qayta yozib bo‘lmadi",
+            ServiceType.TRANSLATE: "Matnni tarjima qilib bo‘lmadi",
         }[service_type]
         self._document_failure_message = {
             ServiceType.ESSAY: "Referat hujjatini yaratib bo‘lmadi",
@@ -151,6 +165,7 @@ class EssayPipeline:
             ServiceType.QUIZ: "Quiz hujjatini yaratib bo‘lmadi",
             ServiceType.WRITE_TEXT: "Matn hujjatini yaratib bo‘lmadi",
             ServiceType.REWRITE: "Qayta yozilgan matn hujjatini yaratib bo‘lmadi",
+            ServiceType.TRANSLATE: "Tarjima hujjatini yaratib bo‘lmadi",
         }[service_type]
         if renderer is None:
             renderers: dict[ServiceType, type[Any]] = {
@@ -161,6 +176,7 @@ class EssayPipeline:
                 ServiceType.QUIZ: QuizDocumentRenderer,
                 ServiceType.WRITE_TEXT: WriteTextDocumentRenderer,
                 ServiceType.REWRITE: RewriteDocumentRenderer,
+                ServiceType.TRANSLATE: TranslationDocumentRenderer,
             }
             renderer = renderers[service_type]()
         self._renderer: Any = renderer
@@ -204,17 +220,24 @@ class EssayPipeline:
                     document = await self._provider.generate_write_text(request)  # type: ignore[arg-type]
                 elif self._profile.service_type is ServiceType.REWRITE:
                     document = await self._provider.generate_rewrite(request)  # type: ignore[arg-type]
+                elif self._profile.service_type is ServiceType.TRANSLATE:
+                    document = await self._provider.generate_translation(request)  # type: ignore[arg-type]
                 else:
                     raise RuntimeError("unsupported document generation service")
             except AIContractError as exc:
-                if self._profile.service_type is ServiceType.REWRITE:
+                if self._profile.service_type in {ServiceType.REWRITE, ServiceType.TRANSLATE}:
+                    logger.warning(
+                        "source-bound contract rejected service=%s reason=%s",
+                        self._profile.service_type.value,
+                        str(exc)[:300],
+                    )
                     await self._mark_terminal(
                         order_id,
                         token,
                         error_code="AI_CONTRACT_REJECTED",
                         user_message=self._generation_failure_message,
                     )
-                    raise EssayTerminalError("REWRITE contract rejected AI output") from exc
+                    raise EssayTerminalError("source-bound contract rejected AI output") from exc
                 await self._release_retryable(
                     order_id,
                     token,
@@ -223,7 +246,7 @@ class EssayPipeline:
                 )
                 raise EssayRetryableError("AI generation failed") from exc
             except Exception as exc:
-                if self._profile.service_type is ServiceType.REWRITE:
+                if self._profile.service_type in {ServiceType.REWRITE, ServiceType.TRANSLATE}:
                     await self._mark_terminal(
                         order_id,
                         token,
@@ -231,7 +254,7 @@ class EssayPipeline:
                         user_message=self._generation_failure_message,
                     )
                     raise EssayTerminalError(
-                        "REWRITE provider failed after bounded retries"
+                        "source-bound provider failed after bounded retries"
                     ) from exc
                 await self._release_retryable(
                     order_id,
@@ -245,7 +268,7 @@ class EssayPipeline:
                 section_count = len(document.chapters)
             elif self._profile.service_type is ServiceType.WRITE_TEXT:
                 section_count = len(document.blocks)
-            elif self._profile.service_type is ServiceType.REWRITE:
+            elif self._profile.service_type in {ServiceType.REWRITE, ServiceType.TRANSLATE}:
                 section_count = len(document.segments)
             elif self._profile.service_type is ServiceType.QUIZ:
                 section_count = 0
@@ -259,7 +282,8 @@ class EssayPipeline:
                     "section_count": section_count,
                     "segment_count": (
                         len(document.segments)
-                        if self._profile.service_type is ServiceType.REWRITE
+                        if self._profile.service_type
+                        in {ServiceType.REWRITE, ServiceType.TRANSLATE}
                         else 0
                     ),
                     "question_count": (
@@ -268,6 +292,20 @@ class EssayPipeline:
                         else 0
                     ),
                     "reference_count": len(document.references),
+                    **(
+                        {
+                            "source_language": document.source_language,
+                            "target_language": document.target_language,
+                            "translation_risk_gate_passed": document.verifier_passed is True,
+                            "protected_association_score": translation_protected_association_score(
+                                cast(TranslationGenerationRequest, request), document
+                            ),
+                            "canonical_body_sha256": translation_body_digest(document),
+                            "canonical_body_characters": len(normalized_translation_body(document)),
+                        }
+                        if self._profile.service_type is ServiceType.TRANSLATE
+                        else {}
+                    ),
                 },
             )
             try:
@@ -291,6 +329,7 @@ class EssayPipeline:
 
             pdf_path: Path | None = None
             pdf_error: str | None = None
+            artifact_parity_score: float | None = None
             try:
                 pdf_path = await self._pdf_converter(
                     docx_path,
@@ -300,6 +339,9 @@ class EssayPipeline:
                 report = validate_text_pdf(
                     pdf_path,
                     expected_phrases=(document.title,),
+                    minimum_characters=(
+                        2 if self._profile.service_type is ServiceType.TRANSLATE else 100
+                    ),
                     minimum_pages={
                         ServiceType.COURSE_WORK: 4,
                         ServiceType.SUMMARY: 2,
@@ -308,6 +350,12 @@ class EssayPipeline:
                 )
                 if not report.is_valid:
                     raise ValueError("converted PDF failed content validation")
+                if self._profile.service_type is ServiceType.TRANSLATE:
+                    artifact_parity_score = translation_artifact_parity_score(
+                        document, docx_path=docx_path, pdf_path=pdf_path
+                    )
+                    if artifact_parity_score != 1.0:
+                        raise ValueError("translation DOCX/PDF canonical parity failed")
             except Exception:
                 pdf_error = "PDF_CONVERSION_FAILED"
                 pdf_path = None
@@ -318,6 +366,7 @@ class EssayPipeline:
                 ServiceType.QUIZ,
                 ServiceType.WRITE_TEXT,
                 ServiceType.REWRITE,
+                ServiceType.TRANSLATE,
             }:
                 pdf_messages = {
                     ServiceType.COURSE_WORK: {
@@ -345,6 +394,11 @@ class EssayPipeline:
                         "ru": "Не удалось безопасно подготовить PDF переписанного текста",
                         "en": "The rewritten text PDF could not be prepared safely",
                     },
+                    ServiceType.TRANSLATE: {
+                        "uz": "Tarjima PDF faylini xavfsiz tayyorlab bo‘lmadi",
+                        "ru": "Не удалось безопасно подготовить PDF перевода",
+                        "en": "The translation PDF could not be prepared safely",
+                    },
                 }[self._profile.service_type]
                 await self._mark_terminal(
                     order_id,
@@ -361,6 +415,7 @@ class EssayPipeline:
                     ServiceType.QUIZ: "Quiz",
                     ServiceType.WRITE_TEXT: "Write Text",
                     ServiceType.REWRITE: "Rewrite",
+                    ServiceType.TRANSLATE: "Translation",
                 }[self._profile.service_type]
                 raise EssayTerminalError(f"{service_label} PDF conversion or validation failed")
 
@@ -431,6 +486,11 @@ class EssayPipeline:
                     pdf_error=pdf_error,
                     docx_size=docx_path.stat().st_size,
                     pdf_size=pdf_path.stat().st_size if pdf_path is not None else None,
+                    generation_metadata_updates=(
+                        {"canonical_parity_score": artifact_parity_score}
+                        if artifact_parity_score is not None
+                        else None
+                    ),
                 )
             except EssayLeaseBusy:
                 await self._cleanup_attempt_artifacts(uploaded_keys, user_id=user_id)
@@ -452,7 +512,8 @@ class EssayPipeline:
             | SummaryGenerationRequest
             | QuizGenerationRequest
             | WriteTextGenerationRequest
-            | RewriteGenerationRequest,
+            | RewriteGenerationRequest
+            | TranslationGenerationRequest,
             list[str],
         ]
         | None
@@ -539,6 +600,13 @@ class EssayPipeline:
                     mode=str(order.normalized_request["mode"]),  # type: ignore[arg-type]
                 )
                 return token, order.user_id, rewrite_request, pending_keys
+            if self._profile.service_type is ServiceType.TRANSLATE:
+                translation_request = TranslationGenerationRequest(
+                    text=str(order.normalized_request["text"]),
+                    source_language=str(order.normalized_request["source_language"]),  # type: ignore[arg-type]
+                    target_language=str(order.normalized_request["target_language"]),  # type: ignore[arg-type]
+                )
+                return token, order.user_id, translation_request, pending_keys
             common = {
                 "topic": str(order.normalized_request["topic"]),
                 "language": str(order.normalized_request["language"]),
@@ -628,6 +696,7 @@ class EssayPipeline:
         pdf_error: str | None,
         docx_size: int,
         pdf_size: int | None,
+        generation_metadata_updates: dict[str, Any] | None = None,
     ) -> None:
         now = datetime.now(UTC)
         async with self._session_factory() as session, session.begin():
@@ -637,6 +706,7 @@ class EssayPipeline:
             order.pdf_error = pdf_error
             generation_metadata = dict(order.generation_metadata)
             generation_metadata.pop("pending_artifact_keys", None)
+            generation_metadata.update(generation_metadata_updates or {})
             orphan_candidates = [
                 str(key)
                 for key in generation_metadata.get("orphan_candidate_keys", [])
@@ -835,6 +905,32 @@ class RewritePipeline(EssayPipeline):
         )
 
 
+class TranslationPipeline(EssayPipeline):
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        provider: AIProvider,
+        storage: Storage,
+        *,
+        temp_root: Path,
+        pdf_converter: PdfConverter,
+        renderer: TranslationDocumentRenderer | None = None,
+        lease_seconds: int = 900,
+        pdf_timeout_seconds: int = 120,
+    ) -> None:
+        super().__init__(
+            session_factory,
+            provider,
+            storage,
+            temp_root=temp_root,
+            pdf_converter=pdf_converter,
+            renderer=renderer,
+            service_type=ServiceType.TRANSLATE,
+            lease_seconds=lease_seconds,
+            pdf_timeout_seconds=pdf_timeout_seconds,
+        )
+
+
 class QuizPipeline(EssayPipeline):
     def __init__(
         self,
@@ -983,6 +1079,20 @@ async def cleanup_rewrite_orphan_artifacts(
     )
 
 
+async def cleanup_translation_orphan_artifacts(
+    session_factory: async_sessionmaker[AsyncSession],
+    storage: Storage,
+    *,
+    order_id: int,
+) -> bool:
+    return await cleanup_document_orphan_artifacts(
+        session_factory,
+        storage,
+        order_id=order_id,
+        service_type=ServiceType.TRANSLATE,
+    )
+
+
 async def mark_terminal_document_failure(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -1126,6 +1236,22 @@ async def mark_terminal_rewrite_failure(
         session_factory,
         order_id=order_id,
         service_type=ServiceType.REWRITE,
+        error_code=error_code,
+        user_message=user_message,
+    )
+
+
+async def mark_terminal_translation_failure(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    order_id: int,
+    error_code: str = "GENERATION_RETRIES_EXHAUSTED",
+    user_message: str = "Tarjimani tayyorlashda xatolik yuz berdi. Keyinroq qayta urinib ko‘ring.",
+) -> bool:
+    return await mark_terminal_document_failure(
+        session_factory,
+        order_id=order_id,
+        service_type=ServiceType.TRANSLATE,
         error_code=error_code,
         user_message=user_message,
     )

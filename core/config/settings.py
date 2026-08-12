@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     ai_timeout_seconds: float = Field(default=60.0, gt=0, le=300, allow_inf_nan=False)
     ai_max_retries: int = Field(default=3, ge=0, le=10)
     ai_retry_base_delay_seconds: float = Field(default=0.5, ge=0, le=10)
+    semantic_risk_model_dir: Path = Path("models/multilingual-nli")
+    semantic_risk_timeout_seconds: float = Field(default=10.0, gt=0, le=30, allow_inf_nan=False)
 
     payment_provider: Literal["mock", "click", "payme"] = "mock"
     mock_payment_secret: SecretStr = SecretStr("development-mock-secret")

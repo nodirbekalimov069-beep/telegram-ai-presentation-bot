@@ -95,6 +95,7 @@ async def start_service(
         ServiceType.QUIZ: "service.quiz_notice",
         ServiceType.WRITE_TEXT: "service.write_notice",
         ServiceType.REWRITE: "service.rewrite_notice",
+        ServiceType.TRANSLATE: "service.translate_notice",
     }
     await callback.message.answer(
         localizer.text(
@@ -353,6 +354,10 @@ def _safe_summary(
     lines: list[str] = []
     for field in definition.fields:
         value = payload[field.name]
+        prompt = localizer.text(language, field.prompt_key).rstrip(":")
+        if service_type is ServiceType.TRANSLATE and field.name == "text":
+            lines.append(f"• <b>{escape(prompt)}</b>:\n<pre>{escape(str(value))}</pre>")
+            continue
         if field.kind is FieldKind.BOOLEAN:
             shown = localizer.option_label(language, "yes" if bool(value) else "no")
         elif field.options:
@@ -362,7 +367,6 @@ def _safe_summary(
         compact = " ".join(shown.split())
         if len(compact) > 120:
             compact = f"{compact[:117]}…"
-        prompt = localizer.text(language, field.prompt_key).rstrip(":")
         lines.append(f"• <b>{escape(prompt)}</b>: {escape(compact)}")
     return "\n".join(lines)
 
@@ -526,6 +530,13 @@ async def submit_service_order(
                 request_payload=dict(data["fields"]),
                 idempotency_key=f"svc:{callback.from_user.id}:{token}",
             )
+        elif service_type is ServiceType.TRANSLATE:
+            await service.create_translation_order(
+                session,
+                telegram_user_id=callback.from_user.id,
+                request_payload=dict(data["fields"]),
+                idempotency_key=f"svc:{callback.from_user.id}:{token}",
+            )
         else:
             await service.create_preview_order(
                 session,
@@ -555,6 +566,8 @@ async def submit_service_order(
         created_key = "service.write_created"
     elif service_type is ServiceType.REWRITE:
         created_key = "service.rewrite_created"
+    elif service_type is ServiceType.TRANSLATE:
+        created_key = "service.translate_created"
     else:
         created_key = "service.created"
     await callback.message.answer(localizer.text(language, created_key))

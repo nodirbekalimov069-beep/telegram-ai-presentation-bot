@@ -52,6 +52,7 @@ SAMPLES: dict[str, str] = {
     "style": "academic",
     "text": "Bu qayta ishlash yoki tarjima uchun yetarli sinov matni.",
     "mode": "formal",
+    "source_language": "uz",
     "target_language": "en",
     "document_type": "application",
     "details": "Universitet rektoriga ta’til so‘rab yoziladi",
@@ -78,6 +79,7 @@ async def test_every_service_fsm_reaches_expected_order_submission(
     quiz_created = AsyncMock(return_value=SimpleNamespace(id=1))
     write_text_created = AsyncMock(return_value=SimpleNamespace(id=1))
     rewrite_created = AsyncMock(return_value=SimpleNamespace(id=1))
+    translation_created = AsyncMock(return_value=SimpleNamespace(id=1))
     monkeypatch.setattr(
         service_handlers,
         "ServiceOrderService",
@@ -91,6 +93,7 @@ async def test_every_service_fsm_reaches_expected_order_submission(
                 create_quiz_order=quiz_created,
                 create_write_text_order=write_text_created,
                 create_rewrite_order=rewrite_created,
+                create_translation_order=translation_created,
             )
         ),
     )
@@ -121,6 +124,7 @@ async def test_every_service_fsm_reaches_expected_order_submission(
         quiz_created.assert_not_awaited()
         write_text_created.assert_not_awaited()
         rewrite_created.assert_not_awaited()
+        translation_created.assert_not_awaited()
         return
 
     for index, field in enumerate(definition.fields):
@@ -158,6 +162,7 @@ async def test_every_service_fsm_reaches_expected_order_submission(
     quiz_created.assert_not_awaited()
     write_text_created.assert_not_awaited()
     rewrite_created.assert_not_awaited()
+    translation_created.assert_not_awaited()
     token = str(state.data["flow_token"])
     submit_callback = SimpleNamespace(
         data=f"svs:{token}",
@@ -186,6 +191,8 @@ async def test_every_service_fsm_reaches_expected_order_submission(
         created = write_text_created
     elif service_type is ServiceType.REWRITE:
         created = rewrite_created
+    elif service_type is ServiceType.TRANSLATE:
+        created = translation_created
     else:
         created = preview_created
     created.assert_awaited_once()
@@ -199,6 +206,7 @@ async def test_every_service_fsm_reaches_expected_order_submission(
         ServiceType.QUIZ,
         ServiceType.WRITE_TEXT,
         ServiceType.REWRITE,
+        ServiceType.TRANSLATE,
     }:
         assert call["service_type"] is service_type
     assert call["idempotency_key"].startswith("svc:777:")
@@ -522,3 +530,15 @@ def test_boolean_confirmation_uses_localized_yes_no_not_raw_true() -> None:
         summary = service_handlers._safe_summary(ServiceType.QUIZ, payload, localizer, language)
         assert expected in summary
         assert "true" not in summary.lower()
+
+
+def test_translation_confirmation_summary_preserves_full_source_exactly() -> None:
+    source = "Bu  matn\n" + ("uzun jumla " * 20)
+    summary = service_handlers._safe_summary(
+        ServiceType.TRANSLATE,
+        {"text": source, "source_language": "uz", "target_language": "en"},
+        Localizer.load_default(),
+        "uz",
+    )
+    assert f"<pre>{source}</pre>" in summary
+    assert "…" not in summary

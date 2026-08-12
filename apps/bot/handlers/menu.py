@@ -46,6 +46,7 @@ _ARTIFACT_CAPTION_KEYS = {
     ServiceType.QUIZ: "orders.quiz_artifact_caption",
     ServiceType.WRITE_TEXT: "orders.write_artifact_caption",
     ServiceType.REWRITE: "orders.rewrite_artifact_caption",
+    ServiceType.TRANSLATE: "orders.translate_artifact_caption",
 }
 
 

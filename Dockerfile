@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 FROM node:22-bookworm-slim AS node-runtime
 
 FROM python:3.12-slim-bookworm AS runtime
@@ -40,6 +38,17 @@ COPY scripts ./scripts
 COPY alembic.ini ./
 
 RUN uv sync --frozen --no-dev --no-editable \
+    && mkdir -p /app/models/multilingual-nli/onnx \
+    && curl --fail --location --retry 3 --retry-delay 2 \
+      https://huggingface.co/onnx-community/multilingual-MiniLMv2-L6-mnli-xnli-ONNX/resolve/ca5daf3d11b6c4b3143b1f4602a2edfb64c3ad7e/tokenizer.json \
+      -o /app/models/multilingual-nli/tokenizer.json \
+    && curl --fail --location --retry 3 --retry-delay 2 \
+      https://huggingface.co/onnx-community/multilingual-MiniLMv2-L6-mnli-xnli-ONNX/resolve/ca5daf3d11b6c4b3143b1f4602a2edfb64c3ad7e/onnx/model.onnx \
+      -o /app/models/multilingual-nli/onnx/model.onnx \
+    && printf '%s  %s\n%s  %s\n' \
+      d0091a328b3441d754e481db5a390d7f3b8dabc6016869fd13ba350d23ddc4cd /app/models/multilingual-nli/tokenizer.json \
+      95743cad9148e16eac551a13ddccd5cef2bd1e3a56e325451a5e9212fea30cc9 /app/models/multilingual-nli/onnx/model.onnx \
+      | sha256sum --check --strict \
     && npm ci --omit=dev --prefix /app/apps/presentation_engine \
     && npm cache clean --force \
     && addgroup --system --gid 10001 app \

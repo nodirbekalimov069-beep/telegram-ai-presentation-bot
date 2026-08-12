@@ -120,6 +120,7 @@
   "service.field.style": "Choose the style:",
   "service.field.text": "Send the text (up to 4,000 characters):",
   "service.field.mode": "Choose the rewriting mode:",
+  "service.field.source_language": "Choose the source-text language:",
   "service.field.target_language": "Choose the target language:",
   "service.field.document_type": "Choose the document type:",
   "service.field.details": "Enter the document details:",
@@ -208,10 +209,13 @@
   "orders.quiz_artifact_caption": "📎 Quiz — {artifact}",
   "orders.write_artifact_caption": "📎 Text — {artifact}",
   "orders.rewrite_artifact_caption": "📎 Rewritten text — {artifact}",
+  "orders.translate_artifact_caption": "📎 Translation — {artifact}",
   "service.quiz_notice": "🧠 Enter the quiz topic. Generation starts only after you press ✅ Prepare.",
   "service.quiz_created": "⏳ Your quiz is being prepared. An editable DOCX and validated PDF will be sent when ready.",
   "service.write_notice": "✍️ Enter the text topic. Generation starts only after you press ✅ Prepare.",
   "service.write_created": "⏳ Your text is being prepared. An editable DOCX and validated PDF will be sent when ready.",
   "service.rewrite_notice": "🔄 The source text will be safely rewritten in the selected mode. AI starts only after ✅ Prepare.",
-  "service.rewrite_created": "⏳ Your text is being rewritten. An editable DOCX and validated PDF will be sent when ready."
+  "service.rewrite_created": "⏳ Your text is being rewritten. An editable DOCX and validated PDF will be sent when ready.",
+  "service.translate_notice": "🌐 High-confidence AI-assisted translation. Important names, numbers, dates, amounts and formatting are checked; ambiguous or contradictory results are not released. This is not a guarantee of professional or certified legal/medical translation. AI starts only after ✅ Prepare.",
+  "service.translate_created": "⏳ Your text is being translated. An editable DOCX and validated PDF will be sent when ready."
 }

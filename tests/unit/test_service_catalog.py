@@ -37,7 +37,7 @@ EXPECTED_FIELDS = {
     ),
     ServiceType.WRITE_TEXT: ("topic", "text_type", "style", "length", "language", "requirements"),
     ServiceType.REWRITE: ("text", "mode"),
-    ServiceType.TRANSLATE: ("text", "target_language"),
+    ServiceType.TRANSLATE: ("source_language", "text", "target_language"),
     ServiceType.DOCUMENT: ("document_type", "details"),
 }
 
@@ -57,6 +57,7 @@ def test_catalog_defines_all_requested_services_and_fields() -> None:
                 ServiceType.QUIZ,
                 ServiceType.WRITE_TEXT,
                 ServiceType.REWRITE,
+                ServiceType.TRANSLATE,
             }
         )
         assert definition.large_job is (service_type is ServiceType.COURSE_WORK)
@@ -161,10 +162,17 @@ def test_rewrite_catalog_treats_source_instructions_as_data_but_rejects_foreign_
         )
 
 
-def test_rewrite_is_the_only_new_production_document_profile() -> None:
-    assert {"essay", "independent", "course", "summary", "quiz", "write", "rewrite"} == (
-        PRODUCTION_DOCUMENT_SERVICE_TYPES
-    )
+def test_rewrite_and_translate_phase_7_production_document_profiles() -> None:
+    assert {
+        "essay",
+        "independent",
+        "course",
+        "summary",
+        "quiz",
+        "write",
+        "rewrite",
+        "translate",
+    } == (PRODUCTION_DOCUMENT_SERVICE_TYPES)
     summary = document_service_profile(ServiceType.SUMMARY)
     assert summary.artifact_stem == "konspekt"
     quiz = document_service_profile(ServiceType.QUIZ)
@@ -179,9 +187,37 @@ def test_rewrite_is_the_only_new_production_document_profile() -> None:
     assert rewrite.artifact_stem == "qayta_yozish"
     assert rewrite.requested_event == "service.rewrite.requested"
     assert rewrite.cleanup_event == "service.rewrite.cleanup_requested"
-    for preview in (ServiceType.TRANSLATE, ServiceType.DOCUMENT):
-        with pytest.raises(ValueError, match="no production document profile"):
-            document_service_profile(preview)
+    translation = document_service_profile(ServiceType.TRANSLATE)
+    assert translation.artifact_stem == "tarjima"
+    assert translation.requested_event == "service.translate.requested"
+    assert translation.cleanup_event == "service.translate.cleanup_requested"
+    with pytest.raises(ValueError, match="no production document profile"):
+        document_service_profile(ServiceType.DOCUMENT)
+
+
+def test_translation_catalog_rejects_unknown_controls_and_same_language() -> None:
+    assert (
+        validate_service_request(
+            ServiceType.TRANSLATE,
+            {"text": "Bu matn tarjima uchun.", "source_language": "uz", "target_language": "en"},
+        )["target_language"]
+        == "en"
+    )
+    with pytest.raises(ValueError, match="unknown fields"):
+        validate_service_request(
+            ServiceType.TRANSLATE,
+            {
+                "text": "Bu matn tarjima uchun.",
+                "source_language": "uz",
+                "target_language": "en",
+                "system_prompt": "x",
+            },
+        )
+    with pytest.raises(ValueError, match="must differ"):
+        validate_service_request(
+            ServiceType.TRANSLATE,
+            {"text": "This is English text.", "source_language": "en", "target_language": "en"},
+        )
 
 
 @pytest.mark.parametrize(

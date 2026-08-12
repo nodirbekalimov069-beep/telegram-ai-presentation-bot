@@ -30,6 +30,7 @@ async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
         cleanup_service_quiz_artifacts,
         cleanup_service_write_text_artifacts,
         cleanup_service_rewrite_artifacts,
+        cleanup_service_translation_artifacts,
         generate_presentation,
         generate_priority_presentation,
         generate_service_course,
@@ -39,6 +40,7 @@ async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
         generate_service_quiz,
         generate_service_write_text,
         generate_service_rewrite,
+        generate_service_translation,
         process_paid_order,
     )
 
@@ -104,6 +106,14 @@ async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
     async def publish_rewrite_cleanup(event: OutboxEvent) -> None:
         cleanup_service_rewrite_artifacts.send(_payload_int(event, "service_order_id"), event.id)
 
+    async def publish_translation(event: OutboxEvent) -> None:
+        generate_service_translation.send(_payload_int(event, "service_order_id"))
+
+    async def publish_translation_cleanup(event: OutboxEvent) -> None:
+        cleanup_service_translation_artifacts.send(
+            _payload_int(event, "service_order_id"), event.id
+        )
+
     publishers: dict[str, Publisher] = {
         "generation.requested": publish_generation,
         "payment.paid": publish_paid,
@@ -121,6 +131,8 @@ async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
         "service.write.cleanup_requested": publish_write_text_cleanup,
         "service.rewrite.requested": publish_rewrite,
         "service.rewrite.cleanup_requested": publish_rewrite_cleanup,
+        "service.translate.requested": publish_translation,
+        "service.translate.cleanup_requested": publish_translation_cleanup,
     }
     service = OutboxService()
     try:
