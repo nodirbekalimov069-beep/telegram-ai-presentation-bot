@@ -136,6 +136,9 @@ class MockAIProvider:
     def set_quiz_call_reserver(self, reserver: object) -> None:
         del reserver
 
+    def set_quiz_rejection_recorder(self, recorder: object) -> None:
+        del recorder
+
     async def generate_outline(self, request: PresentationRequest) -> Outline:
         titles = _SECTION_TITLES[request.language]
         slides: list[OutlineSlide] = []

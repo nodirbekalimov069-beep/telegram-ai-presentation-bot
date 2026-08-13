@@ -86,6 +86,10 @@ from modules.service_orders.essay_pipeline import (
     mark_terminal_write_text_failure,
 )
 from modules.service_orders.catalog import ServiceType
+from modules.service_orders.quiz_notifications import (
+    notify_quiz_progress,
+    notify_terminal_quiz_failure,
+)
 from modules.orders.domain import OrderStatus
 from modules.orders.models import Order
 from modules.presentations.models import Presentation
@@ -599,6 +603,40 @@ async def _process_service_summary(service_order_id: int) -> None:
 
 async def _process_service_quiz(service_order_id: int) -> None:
     await _process_service_document(service_order_id, service_type=ServiceType.QUIZ)
+
+
+async def _notify_terminal_service_quiz(service_order_id: int) -> None:
+    from aiogram import Bot
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    token = settings.telegram_bot_token.get_secret_value()
+    if not token:
+        await engine.dispose()
+        raise RuntimeError("Telegram bot token is required for QUIZ failure notification")
+    try:
+        async with Bot(token=token) as bot:
+            await notify_terminal_quiz_failure(factory, bot=bot, order_id=service_order_id)
+    finally:
+        await engine.dispose()
+
+
+async def _notify_service_quiz_progress(service_order_id: int) -> None:
+    from aiogram import Bot
+
+    settings = get_settings()
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    token = settings.telegram_bot_token.get_secret_value()
+    if not token:
+        await engine.dispose()
+        raise RuntimeError("Telegram bot token is required for QUIZ progress notification")
+    try:
+        async with Bot(token=token) as bot:
+            await notify_quiz_progress(factory, bot=bot, order_id=service_order_id)
+    finally:
+        await engine.dispose()
 
 
 async def _process_service_write_text(service_order_id: int) -> None:
@@ -1166,6 +1204,28 @@ def generate_service_summary(service_order_id: int) -> None:
 )
 def generate_service_quiz(service_order_id: int) -> None:
     _run_service_quiz_actor(service_order_id)
+
+
+@dramatiq.actor(
+    queue_name="notifications",
+    max_retries=_settings.generation_max_retries,
+    min_backoff=10_000,
+    max_backoff=180_000,
+    time_limit=180_000,
+)
+def notify_terminal_service_quiz(service_order_id: int) -> None:
+    asyncio.run(_notify_terminal_service_quiz(service_order_id))
+
+
+@dramatiq.actor(
+    queue_name="notifications",
+    max_retries=_settings.generation_max_retries,
+    min_backoff=10_000,
+    max_backoff=180_000,
+    time_limit=180_000,
+)
+def notify_service_quiz_progress(service_order_id: int) -> None:
+    asyncio.run(_notify_service_quiz_progress(service_order_id))
 
 
 @dramatiq.actor(

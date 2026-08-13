@@ -39,6 +39,8 @@ async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
         generate_service_essay,
         generate_service_summary,
         generate_service_quiz,
+        notify_service_quiz_progress,
+        notify_terminal_service_quiz,
         generate_service_write_text,
         generate_service_rewrite,
         generate_service_translation,
@@ -93,6 +95,12 @@ async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
     async def publish_quiz(event: OutboxEvent) -> None:
         generate_service_quiz.send(_payload_int(event, "service_order_id"))
 
+    async def publish_quiz_terminal_notification(event: OutboxEvent) -> None:
+        notify_terminal_service_quiz.send(_payload_int(event, "service_order_id"))
+
+    async def publish_quiz_progress(event: OutboxEvent) -> None:
+        notify_service_quiz_progress.send(_payload_int(event, "service_order_id"))
+
     async def publish_quiz_cleanup(event: OutboxEvent) -> None:
         cleanup_service_quiz_artifacts.send(_payload_int(event, "service_order_id"), event.id)
 
@@ -134,6 +142,8 @@ async def run_dispatcher(*, poll_interval: float = 0.5) -> None:
         "service.summary.requested": publish_summary,
         "service.summary.cleanup_requested": publish_summary_cleanup,
         "service.quiz.requested": publish_quiz,
+        "service.quiz.progress_requested": publish_quiz_progress,
+        "service.quiz.terminal_notification_requested": publish_quiz_terminal_notification,
         "service.quiz.cleanup_requested": publish_quiz_cleanup,
         "service.write.requested": publish_write_text,
         "service.write.cleanup_requested": publish_write_text_cleanup,

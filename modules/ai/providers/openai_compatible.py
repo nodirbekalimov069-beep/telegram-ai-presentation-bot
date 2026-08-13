@@ -103,13 +103,46 @@ from modules.ai.presentation_agent import (
     AgentReply,
     build_agent_messages,
 )
-from modules.ai.providers.errors import ProviderCallBudgetExhausted
+from modules.ai.providers.errors import ProviderCallBudgetExhausted, QuizRejectionCategory
 
 StructuredResponse = TypeVar("StructuredResponse", bound=BaseModel)
 _TRANSIENT_ERRORS = (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError)
 _CONTENT_BATCH_SIZE = 5
 _MAX_COMPLETION_TOKENS = 8192
 logger = logging.getLogger(__name__)
+
+
+def _classify_quiz_rejection(
+    error: Exception, *, schema_error: bool | None
+) -> QuizRejectionCategory:
+    """Classify without exposing rejected values or free-form provider content."""
+    if schema_error is None:
+        return QuizRejectionCategory.OTHER_INVALID
+    summary = str(error).casefold()
+    if "duplicate" in summary or "unique" in summary:
+        return QuizRejectionCategory.DUPLICATE
+    if schema_error:
+        return QuizRejectionCategory.SCHEMA_INVALID
+    return QuizRejectionCategory.SEMANTIC_INVALID
+
+
+def _quiz_corrective_feedback(category: QuizRejectionCategory) -> str:
+    """Return bounded category-only feedback; never include rejected content."""
+    return {
+        QuizRejectionCategory.SCHEMA_INVALID: (
+            "The previous response was schema invalid. Return one complete JSON object "
+            "that exactly matches the required schema and field types."
+        ),
+        QuizRejectionCategory.DUPLICATE: build_quiz_retry_message("quiz options must be unique"),
+        QuizRejectionCategory.SEMANTIC_INVALID: (
+            "The previous response was semantic invalid. Correct every request-specific, "
+            "language, factual-safety, and consistency constraint without weakening validation."
+        ),
+        QuizRejectionCategory.OTHER_INVALID: (
+            "The previous response was other invalid. Return one complete, non-refusal JSON "
+            "object satisfying the schema and every requested constraint."
+        ),
+    }[category]
 
 
 class _StructuredResponseBudgetExhausted(AIContractError):
@@ -236,6 +269,9 @@ class OpenAICompatibleProvider:
         self._retry_base_delay_seconds = retry_base_delay_seconds
         self._semantic_risk_boundary = semantic_risk_boundary
         self._quiz_call_reserver: Callable[[], Awaitable[None]] | None = None
+        self._quiz_rejection_recorder: Callable[[QuizRejectionCategory], Awaitable[None]] | None = (
+            None
+        )
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=self._base_url,
@@ -248,6 +284,22 @@ class OpenAICompatibleProvider:
 
     def set_quiz_call_reserver(self, reserver: Callable[[], Awaitable[None]]) -> None:
         self._quiz_call_reserver = reserver
+
+    def set_quiz_rejection_recorder(
+        self, recorder: Callable[[QuizRejectionCategory], Awaitable[None]]
+    ) -> None:
+        self._quiz_rejection_recorder = recorder
+
+    async def _record_quiz_rejection(
+        self, category: QuizRejectionCategory, *, attempt: int
+    ) -> None:
+        logger.info(
+            "quiz structured response rejected category=%s attempt=%d",
+            category.value,
+            attempt,
+        )
+        if self._quiz_rejection_recorder is not None:
+            await self._quiz_rejection_recorder(category)
 
     async def _request_structured(
         self,
@@ -306,12 +358,16 @@ class OpenAICompatibleProvider:
                         f"AI provider returned invalid {response_format.__name__}: "
                         f"{_validation_error_summary(exc)}"
                     ) from exc
+                category = QuizRejectionCategory.SCHEMA_INVALID
+                if response_format is QuizDocument:
+                    category = _classify_quiz_rejection(exc, schema_error=True)
+                    await self._record_quiz_rejection(category, attempt=attempt + 1)
                 if attempt + 1 >= attempt_limit:
                     raise _StructuredResponseBudgetExhausted(
                         "AI provider repeatedly returned an invalid structured response"
                     ) from exc
-                if response_format.__name__ == "QuizDocument":
-                    correction_message = build_quiz_retry_message(str(exc))
+                if response_format is QuizDocument:
+                    correction_message = _quiz_corrective_feedback(category)
                 else:
                     correction_message = (
                         "The previous response failed schema validation. "
@@ -341,10 +397,27 @@ class OpenAICompatibleProvider:
             )
             message = completion.choices[0].message
             if message.refusal:
-                raise AIContractError("AI provider refused the structured request")
+                if response_format is not QuizDocument or not retry_invalid_response:
+                    raise AIContractError("AI provider refused the structured request")
+                category = QuizRejectionCategory.OTHER_INVALID
+                await self._record_quiz_rejection(category, attempt=attempt + 1)
+                if attempt + 1 >= attempt_limit:
+                    raise _StructuredResponseBudgetExhausted(
+                        "AI provider repeatedly refused the structured request"
+                    )
+                request_messages.append(
+                    cast(
+                        ChatCompletionMessageParam,
+                        {"role": "system", "content": _quiz_corrective_feedback(category)},
+                    )
+                )
+                continue
             if message.parsed is None:
                 if not retry_invalid_response:
                     raise AIContractError("AI provider returned no structured response")
+                category = QuizRejectionCategory.SCHEMA_INVALID
+                if response_format is QuizDocument:
+                    await self._record_quiz_rejection(category, attempt=attempt + 1)
                 if attempt + 1 >= attempt_limit:
                     raise _StructuredResponseBudgetExhausted(
                         "AI provider repeatedly returned no structured response"
@@ -355,7 +428,9 @@ class OpenAICompatibleProvider:
                         {
                             "role": "system",
                             "content": (
-                                "The previous response contained no valid structured object. "
+                                _quiz_corrective_feedback(category)
+                                if response_format is QuizDocument
+                                else "The previous response contained no valid structured object. "
                                 "Return one corrected JSON object matching the required schema."
                             ),
                         },
@@ -369,14 +444,18 @@ class OpenAICompatibleProvider:
                 except AIContractError as exc:
                     if not retry_invalid_response:
                         raise
+                    category = QuizRejectionCategory.SEMANTIC_INVALID
+                    if response_format is QuizDocument:
+                        category = _classify_quiz_rejection(exc, schema_error=False)
+                        await self._record_quiz_rejection(category, attempt=attempt + 1)
                     if attempt + 1 >= attempt_limit:
                         raise _StructuredResponseBudgetExhausted(
                             "AI provider repeatedly returned a response violating the request contract"
                         ) from exc
                     if contract_retry_builder is not None:
                         correction = contract_retry_builder(str(exc))
-                    elif response_format.__name__ == QuizDocument.__name__:
-                        correction = build_quiz_retry_message(str(exc))
+                    elif response_format is QuizDocument:
+                        correction = _quiz_corrective_feedback(category)
                     elif response_format.__name__ == WriteTextDocument.__name__:
                         correction = build_write_text_retry_message(str(exc))
                     else:

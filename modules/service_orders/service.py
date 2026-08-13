@@ -189,6 +189,9 @@ class ServiceOrderService:
         telegram_user_id: int,
         request_payload: dict[str, Any],
         idempotency_key: str,
+        progress_chat_id: int | None = None,
+        progress_message_id: int | None = None,
+        progress_language: str | None = None,
     ) -> ServiceOrder:
         return await self._create_production_document_order(
             session,
@@ -196,6 +199,9 @@ class ServiceOrderService:
             service_type=ServiceType.QUIZ,
             request_payload=request_payload,
             idempotency_key=idempotency_key,
+            progress_chat_id=progress_chat_id,
+            progress_message_id=progress_message_id,
+            progress_language=progress_language,
         )
 
     async def create_write_text_order(
@@ -270,6 +276,9 @@ class ServiceOrderService:
         service_type: ServiceType,
         request_payload: dict[str, Any],
         idempotency_key: str,
+        progress_chat_id: int | None = None,
+        progress_message_id: int | None = None,
+        progress_language: str | None = None,
     ) -> ServiceOrder:
         from modules.service_orders.document_services import document_service_profile
 
@@ -279,6 +288,25 @@ class ServiceOrderService:
             raise ValueError("invalid idempotency key")
         profile = document_service_profile(service_type)
         payload = validate_service_request(service_type, request_payload)
+        quiz_progress: dict[str, int | str] | None = None
+        if service_type is ServiceType.QUIZ:
+            progress_values = (progress_chat_id, progress_message_id, progress_language)
+            if any(value is not None for value in progress_values):
+                if (
+                    isinstance(progress_chat_id, bool)
+                    or not isinstance(progress_chat_id, int)
+                    or progress_chat_id <= 0
+                    or isinstance(progress_message_id, bool)
+                    or not isinstance(progress_message_id, int)
+                    or progress_message_id <= 0
+                    or progress_language not in {"uz", "ru", "en"}
+                ):
+                    raise ValueError("invalid QUIZ progress destination")
+                quiz_progress = {
+                    "chat_id": progress_chat_id,
+                    "message_id": progress_message_id,
+                    "language": progress_language,
+                }
         request_hash = _payload_hash(service_type, payload)
         now = datetime.now(UTC)
         try:
@@ -299,6 +327,10 @@ class ServiceOrderService:
                         request_hash=request_hash,
                     )
                 definition = SERVICE_CATALOG[service_type]
+                generation_metadata: dict[str, Any] = {}
+                if quiz_progress is not None:
+                    generation_metadata["quiz_progress"] = quiz_progress
+                    generation_metadata["quiz_terminal_notification_status"] = "PENDING"
                 order = ServiceOrder(
                     user_id=user.id,
                     service_type=service_type.value,
@@ -307,7 +339,7 @@ class ServiceOrderService:
                     request_payload=payload,
                     normalized_request=payload,
                     request_hash=request_hash,
-                    generation_metadata={},
+                    generation_metadata=generation_metadata,
                     result_metadata={},
                     queued_at=now,
                     idempotency_key=idempotency_key,
@@ -316,10 +348,18 @@ class ServiceOrderService:
                 await session.flush()
                 await OutboxService().enqueue(
                     session,
-                    event_type=profile.requested_event,
+                    event_type=(
+                        "service.quiz.progress_requested"
+                        if quiz_progress is not None
+                        else profile.requested_event
+                    ),
                     aggregate_type="service_order",
                     aggregate_id=str(order.id),
-                    idempotency_key=f"service-{service_type.value}:{order.id}:1",
+                    idempotency_key=(
+                        f"service-quiz-progress:{order.id}"
+                        if quiz_progress is not None
+                        else f"service-{service_type.value}:{order.id}:1"
+                    ),
                     payload={"service_order_id": order.id},
                 )
                 return order

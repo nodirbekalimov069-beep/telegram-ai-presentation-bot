@@ -107,7 +107,13 @@ async def test_every_service_fsm_reaches_expected_order_submission(
         ),
     )
     state = FakeState()
-    message = SimpleNamespace(answer=AsyncMock(), from_user=SimpleNamespace(id=777))
+    message = SimpleNamespace(
+        answer=AsyncMock(),
+        edit_text=AsyncMock(),
+        chat=SimpleNamespace(id=777),
+        message_id=901,
+        from_user=SimpleNamespace(id=777),
+    )
     start_callback = SimpleNamespace(
         data=f"svc:{service_type.value}",
         message=message,
@@ -224,6 +230,13 @@ async def test_every_service_fsm_reaches_expected_order_submission(
     }:
         assert call["service_type"] is service_type
     assert call["idempotency_key"].startswith("svc:777:")
+    if service_type is ServiceType.QUIZ:
+        assert call["progress_chat_id"] == 777
+        assert call["progress_message_id"] == 901
+        assert call["progress_language"] == "uz"
+        message.edit_text.assert_not_awaited()
+    else:
+        message.edit_text.assert_not_awaited()
     assert state.state is None
 
 

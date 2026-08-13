@@ -516,6 +516,9 @@ async def submit_service_order(
                 telegram_user_id=callback.from_user.id,
                 request_payload=dict(data["fields"]),
                 idempotency_key=f"svc:{callback.from_user.id}:{token}",
+                progress_chat_id=callback.message.chat.id,
+                progress_message_id=callback.message.message_id,
+                progress_language=language,
             )
         elif service_type is ServiceType.WRITE_TEXT:
             await service.create_write_text_order(
@@ -580,7 +583,8 @@ async def submit_service_order(
         created_key = "service.document_created"
     else:
         created_key = "service.created"
-    await callback.message.answer(localizer.text(language, created_key))
+    if service_type is not ServiceType.QUIZ:
+        await callback.message.answer(localizer.text(language, created_key))
 
 
 @router.callback_query(F.data.regexp(r"^(svc|svp|svw|svk|svb|sve|svx|svs):"))

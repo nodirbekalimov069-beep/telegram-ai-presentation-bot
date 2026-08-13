@@ -876,6 +876,11 @@ question_count, and option_count fields. Spell no quantities inside authored str
 """.strip()
 
 _QUIZ_REPAIR_GUIDANCE = {
+    "quiz options must be unique": (
+        "Duplicate invalid. Make every question text unique after Unicode normalization and "
+        "whitespace folding, and make every option within each question unique. Rewrite repeated "
+        "items as materially different alternatives while preserving every requested constraint."
+    ),
     "numeric token": (
         "Rewrite every authored string without any digit. Keep numbers only in structured numeric "
         "fields and do not express quantities in titles, instructions, questions, options, "

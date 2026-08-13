@@ -101,6 +101,68 @@ async def test_quiz_order_is_transactional_idempotent_and_emits_one_event(quiz_d
     assert events[0].event_type == "service.quiz.requested"
 
 
+@pytest.mark.parametrize(
+    ("progress", "idempotency_key"),
+    [
+        ({"progress_chat_id": 1771}, "quiz-partial-chat"),
+        ({"progress_message_id": 9001}, "quiz-partial-message"),
+        ({"progress_language": "uz"}, "quiz-partial-language"),
+        (
+            {
+                "progress_chat_id": 1771,
+                "progress_message_id": 9001,
+                "progress_language": "de",
+            },
+            "quiz-invalid-language",
+        ),
+        (
+            {
+                "progress_chat_id": 0,
+                "progress_message_id": 9001,
+                "progress_language": "uz",
+            },
+            "quiz-invalid-chat",
+        ),
+        (
+            {
+                "progress_chat_id": 1771,
+                "progress_message_id": 0,
+                "progress_language": "uz",
+            },
+            "quiz-invalid-message",
+        ),
+    ],
+)
+async def test_partial_or_invalid_quiz_progress_is_rejected_before_durable_state(
+    quiz_db: async_sessionmaker[AsyncSession],
+    progress: dict[str, object],
+    idempotency_key: str,
+) -> None:
+    async with quiz_db() as session:
+        with pytest.raises(ValueError, match="invalid QUIZ progress destination"):
+            await ServiceOrderService().create_quiz_order(
+                session,
+                telegram_user_id=1771,
+                request_payload={
+                    "topic": "Algoritmik fikrlash",
+                    "question_count": 4,
+                    "difficulty": "medium",
+                    "option_count": 4,
+                    "answer_key": True,
+                    "language": "uz",
+                    "requirements": "Amaliy vaziyatlarga e’tibor bering",
+                },
+                idempotency_key=idempotency_key,
+                **progress,  # type: ignore[arg-type]
+            )
+
+    async with quiz_db() as session:
+        order_count = await session.scalar(select(func.count(ServiceOrder.id)))
+        outbox_count = await session.scalar(select(func.count(OutboxEvent.id)))
+    assert order_count == 0
+    assert outbox_count == 0
+
+
 async def test_quiz_pipeline_generates_once_and_replay_preserves_artifacts(
     quiz_db, tmp_path: Path
 ) -> None:  # type: ignore[no-untyped-def]

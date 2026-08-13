@@ -213,6 +213,7 @@
   "orders.document_artifact_caption": "📎 Hujjat — {artifact}",
   "service.quiz_notice": "🧠 Quiz mavzusini kiriting. Generatsiya faqat ✅ Tayyorlashni bosganingizdan keyin boshlanadi.",
   "service.quiz_created": "⏳ Quizingiz tayyorlanmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi.",
+  "service.quiz_failure": "❌ Quizni xavfsiz tayyorlab bo‘lmadi. Iltimos, keyinroq qayta urinib ko‘ring.",
   "service.write_notice": "✍️ Matn mavzusini kiriting. Generatsiya faqat ✅ Tayyorlashni bosganingizdan keyin boshlanadi.",
   "service.write_created": "⏳ Matningiz tayyorlanmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi.",
   "service.rewrite_notice": "🔄 Manba matn tanlangan usulda xavfsiz qayta yoziladi. AI faqat ✅ Tayyorlash bosilgandan keyin ishlaydi.",

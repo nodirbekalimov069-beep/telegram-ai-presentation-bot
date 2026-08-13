@@ -70,6 +70,8 @@ class OutboxService:
                 "service.course.cleanup_requested",
                 "service.summary.cleanup_requested",
                 "service.quiz.cleanup_requested",
+                "service.quiz.progress_requested",
+                "service.quiz.terminal_notification_requested",
                 "service.write.cleanup_requested",
                 "service.rewrite.cleanup_requested",
                 "service.translate.cleanup_requested",

@@ -21,10 +21,15 @@ from modules.ai.rewrite_contracts import RewriteDocument, RewriteGenerationReque
 from modules.ai.summary_contracts import SummaryDocument, SummaryGenerationRequest
 from modules.ai.translation_contracts import TranslationDocument, TranslationGenerationRequest
 from modules.ai.write_text_contracts import WriteTextDocument, WriteTextGenerationRequest
+from modules.ai.providers.errors import QuizRejectionCategory
 
 
 class AIProvider(Protocol):
     def set_quiz_call_reserver(self, reserver: Callable[[], Awaitable[None]]) -> None: ...
+
+    def set_quiz_rejection_recorder(
+        self, recorder: Callable[[QuizRejectionCategory], Awaitable[None]]
+    ) -> None: ...
 
     async def generate_outline(self, request: PresentationRequest) -> Outline: ...
 

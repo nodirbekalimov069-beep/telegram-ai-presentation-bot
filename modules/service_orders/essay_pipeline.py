@@ -28,7 +28,7 @@ from modules.ai.translation_contracts import (
 )
 from modules.ai.write_text_contracts import WriteTextGenerationRequest
 from modules.ai.providers.base import AIProvider
-from modules.ai.providers.errors import ProviderCallBudgetExhausted
+from modules.ai.providers.errors import ProviderCallBudgetExhausted, QuizRejectionCategory
 from modules.files.storage import Storage
 from modules.service_orders.catalog import ServiceType
 from modules.service_orders.course_work_documents import CourseWorkDocumentRenderer
@@ -107,6 +107,33 @@ async def _schedule_orphan_cleanup(
     event.available_at = available_at
     event.published_at = None
     event.last_error = None
+
+
+async def _schedule_quiz_terminal_notification(session: AsyncSession, order: ServiceOrder) -> None:
+    metadata = dict(order.generation_metadata)
+    if (
+        order.service_type != ServiceType.QUIZ.value
+        or order.error_code != "AI_PROVIDER_BUDGET_EXHAUSTED"
+        or not isinstance(metadata.get("quiz_progress"), dict)
+    ):
+        return
+    metadata["quiz_terminal_notification_status"] = "PENDING"
+    order.generation_metadata = metadata
+    idempotency_key = f"service-quiz-terminal-notification:{order.id}"
+    event = await session.scalar(
+        select(OutboxEvent).where(OutboxEvent.idempotency_key == idempotency_key)
+    )
+    if event is None:
+        session.add(
+            OutboxEvent(
+                event_type="service.quiz.terminal_notification_requested",
+                aggregate_type="service_order",
+                aggregate_id=str(order.id),
+                idempotency_key=idempotency_key,
+                payload={"service_order_id": order.id},
+                status="PENDING",
+            )
+        )
 
 
 class EssayRetryableError(RuntimeError):
@@ -201,6 +228,9 @@ class EssayPipeline:
         if self._profile.service_type is ServiceType.QUIZ:
             self._provider.set_quiz_call_reserver(
                 lambda: self._reserve_quiz_provider_call(order_id, token)
+            )
+            self._provider.set_quiz_rejection_recorder(
+                lambda category: self._record_quiz_rejection(order_id, token, category)
             )
         if pending_keys:
             try:
@@ -818,6 +848,22 @@ class EssayPipeline:
             metadata["quiz_provider_calls"] = calls + 1
             order.generation_metadata = metadata
 
+    async def _record_quiz_rejection(
+        self, order_id: int, token: str, category: QuizRejectionCategory
+    ) -> None:
+        async with self._session_factory() as session, session.begin():
+            order = await self._owned_lease(session, order_id, token)
+            metadata = dict(order.generation_metadata)
+            allowed = {item.value for item in QuizRejectionCategory}
+            rejections = [
+                str(value) for value in metadata.get("quiz_rejections", []) if str(value) in allowed
+            ]
+            if len(rejections) >= 4:
+                raise ProviderCallBudgetExhausted("quiz rejection budget exhausted")
+            rejections.append(category.value)
+            metadata["quiz_rejections"] = rejections
+            order.generation_metadata = metadata
+
     async def _mark_terminal(
         self,
         order_id: int,
@@ -834,6 +880,8 @@ class EssayPipeline:
             order.retry_count += 1
             order.error_code = error_code
             order.error_message = user_message
+            if self._profile.service_type is ServiceType.QUIZ:
+                await _schedule_quiz_terminal_notification(session, order)
             await _schedule_orphan_cleanup(
                 session, order, available_at=datetime.now(UTC) + timedelta(hours=24)
             )
@@ -1238,6 +1286,8 @@ async def mark_terminal_document_failure(
         order.generation_lease_expires_at = None
         order.error_code = error_code
         order.error_message = user_message
+        if service_type is ServiceType.QUIZ:
+            await _schedule_quiz_terminal_notification(session, order)
         await _schedule_orphan_cleanup(session, order, available_at=now + timedelta(hours=24))
         return True
 
