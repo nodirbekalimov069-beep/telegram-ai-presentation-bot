@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from apps.bot.handlers import menu as menu_handlers
@@ -15,6 +15,8 @@ from core.database.base import Base
 import core.database.models  # noqa: F401
 from core.outbox.models import OutboxEvent
 from modules.ai.providers.mock import MockAIProvider
+from modules.ai.providers.openai_compatible import OpenAICompatibleProvider
+from modules.service_orders.essay_delivery import TelegramCourseWorkDelivery
 from modules.service_orders.catalog import ServiceType
 from modules.service_orders.models import ServiceOrder
 from modules.service_orders.service import ServiceOrderService, ServiceOrderStatus
@@ -137,6 +139,100 @@ async def test_document_order_is_idempotent_with_one_transactional_outbox_event(
     assert len(events) == 1
     assert events[0].event_type == "service.document.requested"
     assert events[0].payload == {"service_order_id": first.id}
+
+
+@pytest.mark.asyncio
+async def test_course_work_automatic_section_label_is_canonical_before_order(
+    service_order_db,
+) -> None:  # type: ignore[no-untyped-def]
+    async with service_order_db() as session:
+        order = await ServiceOrderService().create_course_work_order(
+            session,
+            telegram_user_id=777,
+            request_payload={
+                "subject": "Biologiya",
+                "topic": "Hujayra tuzilishi",
+                "sections": "Bo‘limlarni o‘zing top",
+                "length": "short",
+                "language": "uz",
+                "requirements": "",
+            },
+            idempotency_key="course-auto-sections",
+        )
+        events = list(await session.scalars(select(OutboxEvent)))
+
+    assert order.normalized_request["sections"] == "__automatic_sections__"
+    assert len(events) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sections",
+    [
+        "Faqat bitta bo‘lim",
+        "Kirish; Kirish",
+        ";".join(f"Bo‘lim {index}" for index in range(13)),
+    ],
+)
+async def test_invalid_explicit_course_sections_have_zero_durable_delta(
+    service_order_db, sections: str, monkeypatch: pytest.MonkeyPatch
+) -> None:  # type: ignore[no-untyped-def]
+    provider = AsyncMock()
+    delivery = AsyncMock()
+    monkeypatch.setattr(OpenAICompatibleProvider, "generate_course_work", provider)
+    monkeypatch.setattr(TelegramCourseWorkDelivery, "deliver", delivery)
+
+    async def counts(session: AsyncSession) -> tuple[int, int, int, int]:
+        return (
+            int(await session.scalar(select(func.count(ServiceOrder.id))) or 0),
+            int(await session.scalar(select(func.count(OutboxEvent.id))) or 0),
+            int(
+                await session.scalar(
+                    select(func.count(ServiceOrder.id)).where(
+                        or_(
+                            ServiceOrder.docx_storage_key.is_not(None),
+                            ServiceOrder.pdf_storage_key.is_not(None),
+                        )
+                    )
+                )
+                or 0
+            ),
+            int(
+                await session.scalar(
+                    select(func.count(ServiceOrder.id)).where(
+                        or_(
+                            ServiceOrder.delivery_status != "PENDING",
+                            ServiceOrder.delivery_attempts != 0,
+                            ServiceOrder.docx_telegram_message_id.is_not(None),
+                            ServiceOrder.pdf_telegram_message_id.is_not(None),
+                        )
+                    )
+                )
+                or 0
+            ),
+        )
+
+    async with service_order_db() as session:
+        before = await counts(session)
+        with pytest.raises(ValueError, match="sections"):
+            await ServiceOrderService().create_course_work_order(
+                session,
+                telegram_user_id=777,
+                request_payload={
+                    "subject": "Biologiya",
+                    "topic": "Hujayra tuzilishi",
+                    "sections": sections,
+                    "length": "short",
+                    "language": "uz",
+                    "requirements": "",
+                },
+                idempotency_key="course-invalid-sections",
+            )
+        after = await counts(session)
+
+    assert tuple(after[index] - before[index] for index in range(4)) == (0, 0, 0, 0)
+    provider.assert_not_awaited()
+    delivery.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

@@ -915,6 +915,11 @@ _QUIZ_REPAIR_GUIDANCE = {
         "Rewrite each explanation to state positively why the keyed answer is correct. Do not call "
         "the keyed answer wrong, harmful, useless, invalid, or nonfunctional."
     ),
+    "quiz questions must be unique": (
+        "Make every question text unique after Unicode normalization and whitespace folding. "
+        "Rewrite duplicate questions as materially different application scenarios while keeping "
+        "the requested topic, count, difficulty, option count, language, and answer-key contract."
+    ),
 }
 
 

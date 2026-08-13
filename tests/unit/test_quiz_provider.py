@@ -2,7 +2,9 @@ from typing import Literal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+from openai import APITimeoutError
 from pydantic import ValidationError
 
 from modules.ai.contracts import AIContractError
@@ -145,4 +147,53 @@ async def test_quiz_schema_retry_emits_only_finite_static_correction() -> None:
     assert result is document
     assert emitted == build_quiz_retry_message(str(captured.value))
     assert "quiz options must be unique" not in emitted
+    await provider.aclose()
+
+
+async def test_quiz_timeout_then_duplicate_feedback_produces_unique_questions_within_four_calls() -> (
+    None
+):
+    provider = OpenAICompatibleProvider(
+        base_url="https://example.test/v1",
+        api_key="test-key",
+        model="test-model",
+        max_retries=3,
+        retry_base_delay_seconds=0,
+    )
+    request = QuizGenerationRequest(
+        topic="Algoritmik fikrlash",
+        question_count=2,
+        difficulty="medium",
+        option_count=4,
+        answer_key=True,
+        language="uz",
+    )
+    unique = await MockAIProvider().generate_quiz(request)
+    duplicate_payload = unique.model_dump()
+    duplicate_payload["questions"][1]["text"] = duplicate_payload["questions"][0]["text"]
+    with pytest.raises(ValidationError, match="quiz questions must be unique") as duplicate:
+        QuizDocument.model_validate(duplicate_payload)
+    completion = SimpleNamespace(
+        usage=None,
+        choices=[SimpleNamespace(message=SimpleNamespace(refusal=None, parsed=unique))],
+    )
+    parse = AsyncMock(
+        side_effect=[
+            APITimeoutError(request=httpx.Request("POST", "https://example.test/v1")),
+            duplicate.value,
+            completion,
+        ]
+    )
+    provider._client.chat.completions.parse = parse
+
+    result = await provider.generate_quiz(request)
+
+    correction = parse.await_args_list[2].kwargs["messages"][-1]["content"]
+    assert parse.await_count == 3
+    assert parse.await_count <= 4
+    assert "Make every question text unique" in correction
+    assert "quiz questions must be unique" not in correction
+    assert (
+        len({question.text.casefold() for question in result.questions}) == request.question_count
+    )
     await provider.aclose()

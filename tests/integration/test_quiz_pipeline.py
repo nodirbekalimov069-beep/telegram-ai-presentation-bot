@@ -2,7 +2,9 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
+from openai import APITimeoutError
 from docx import Document
 from pypdf import PdfWriter
 from reportlab.pdfgen import canvas
@@ -13,8 +15,15 @@ import core.database.models  # noqa: F401
 from core.database.base import Base
 from core.outbox.models import OutboxEvent
 from modules.ai.providers.mock import MockAIProvider
+from modules.ai.providers.errors import ProviderCallBudgetExhausted
 from modules.files.storage import LocalStorage
-from modules.service_orders.essay_pipeline import EssayLeaseBusy, EssayTerminalError, QuizPipeline
+from modules.service_orders.essay_pipeline import (
+    EssayLeaseBusy,
+    EssayRetryableError,
+    EssayTerminalError,
+    QuizPipeline,
+    mark_terminal_quiz_failure,
+)
 from modules.service_orders.models import ServiceOrder
 from modules.service_orders.service import ServiceOrderService, ServiceOrderStatus
 from modules.users.service import UserService
@@ -156,6 +165,101 @@ async def test_quiz_pipeline_rejects_blank_pdf_fail_closed(quiz_db, tmp_path: Pa
     assert saved.status == ServiceOrderStatus.FAILED
     assert saved.docx_storage_key is None
     assert saved.pdf_storage_key is None
+
+
+async def test_quiz_timeout_failure_has_no_partial_artifact_or_delivery(
+    quiz_db, tmp_path: Path
+) -> None:  # type: ignore[no-untyped-def]
+    order = await _create_order(quiz_db)
+    provider = MockAIProvider()
+    provider.generate_quiz = AsyncMock(
+        side_effect=APITimeoutError(
+            request=httpx.Request("POST", "https://example.test/v1/chat/completions")
+        )
+    )  # type: ignore[method-assign]
+    pipeline = QuizPipeline(
+        quiz_db,
+        provider,
+        LocalStorage(tmp_path / "storage"),
+        temp_root=tmp_path / "work",
+        pdf_converter=_content_pdf,
+    )
+
+    with pytest.raises(EssayRetryableError, match="AI generation failed"):
+        await pipeline.process(order.id)
+    assert await mark_terminal_quiz_failure(quiz_db, order_id=order.id) is True
+    async with quiz_db() as session:
+        saved = await session.get(ServiceOrder, order.id)
+
+    assert saved is not None
+    assert saved.status == ServiceOrderStatus.FAILED
+    assert saved.error_code == "GENERATION_RETRIES_EXHAUSTED"
+    assert saved.docx_storage_key is None
+    assert saved.pdf_storage_key is None
+    assert saved.delivery_status == "PENDING"
+    assert saved.delivery_attempts == 0
+
+
+async def test_non_openai_provider_budget_exhaustion_is_terminal_without_output(
+    quiz_db, tmp_path: Path
+) -> None:  # type: ignore[no-untyped-def]
+    order = await _create_order(quiz_db)
+    provider = MockAIProvider()
+    provider.generate_quiz = AsyncMock(
+        side_effect=ProviderCallBudgetExhausted("fake provider exhausted")
+    )  # type: ignore[method-assign]
+    pipeline = QuizPipeline(
+        quiz_db,
+        provider,
+        LocalStorage(tmp_path / "storage"),
+        temp_root=tmp_path / "work",
+        pdf_converter=_content_pdf,
+    )
+
+    with pytest.raises(EssayTerminalError, match="provider budget exhausted"):
+        await pipeline.process(order.id)
+    async with quiz_db() as session:
+        saved = await session.get(ServiceOrder, order.id)
+
+    assert saved is not None
+    assert saved.status == ServiceOrderStatus.FAILED
+    assert saved.error_code == "AI_PROVIDER_BUDGET_EXHAUSTED"
+    assert saved.retry_count == 1
+    assert saved.docx_storage_key is None
+    assert saved.pdf_storage_key is None
+    assert saved.result_metadata == {}
+    assert saved.delivery_status == "PENDING"
+    assert saved.delivery_attempts == 0
+    assert saved.docx_telegram_message_id is None
+    assert saved.pdf_telegram_message_id is None
+
+
+async def test_ordinary_provider_failure_remains_retryable_not_budget_exhaustion(
+    quiz_db, tmp_path: Path
+) -> None:  # type: ignore[no-untyped-def]
+    order = await _create_order(quiz_db)
+    provider = MockAIProvider()
+    provider.generate_quiz = AsyncMock(side_effect=ConnectionError("temporary outage"))  # type: ignore[method-assign]
+    pipeline = QuizPipeline(
+        quiz_db,
+        provider,
+        LocalStorage(tmp_path / "storage"),
+        temp_root=tmp_path / "work",
+        pdf_converter=_content_pdf,
+    )
+
+    with pytest.raises(EssayRetryableError, match="AI generation failed"):
+        await pipeline.process(order.id)
+    async with quiz_db() as session:
+        saved = await session.get(ServiceOrder, order.id)
+
+    assert saved is not None
+    assert saved.status == ServiceOrderStatus.QUEUED
+    assert saved.error_code == "AI_GENERATION_FAILED"
+    assert saved.retry_count == 1
+    assert saved.docx_storage_key is None
+    assert saved.pdf_storage_key is None
+    assert saved.delivery_attempts == 0
 
 
 async def test_quiz_pipeline_rejects_parallel_generation_lease(quiz_db, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]

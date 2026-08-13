@@ -2,11 +2,15 @@ from typing import Literal
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import SecretStr
 
+from core.config import Settings
 from modules.ai.course_work_contracts import (
+    COURSE_WORK_AUTOMATIC_SECTIONS,
     CourseWorkDocument,
     CourseWorkGenerationRequest,
 )
+from modules.ai.factory import build_ai_provider
 from modules.ai.providers.mock import MockAIProvider
 from modules.ai.providers.openai_compatible import OpenAICompatibleProvider
 
@@ -81,6 +85,77 @@ async def test_mock_provider_preserves_valid_english_and_russian_prose(
 
     assert result.language == language
     assert result.requirement_evidence
+
+
+@pytest.mark.parametrize(
+    ("language", "subject", "topic"),
+    [
+        ("uz", "Informatika", "Algoritmik fikrlash"),
+        ("ru", "Информатика", "Алгоритмическое мышление"),
+        ("en", "Computer Science", "Algorithmic thinking"),
+    ],
+)
+async def test_production_mock_automatic_course_sections_are_localized(
+    language: Literal["uz", "ru", "en"], subject: str, topic: str
+) -> None:
+    provider = build_ai_provider(Settings(ai_provider="mock", ai_api_key=SecretStr("test-key")))
+    provider.generate_course_work = AsyncMock(wraps=provider.generate_course_work)  # type: ignore[method-assign]
+    request = CourseWorkGenerationRequest(
+        subject=subject,
+        topic=topic,
+        sections=COURSE_WORK_AUTOMATIC_SECTIONS,
+        language=language,
+        length="short",
+    )
+
+    result = await provider.generate_course_work(request)
+    headings = [chapter.heading for chapter in result.chapters]
+
+    assert provider.generate_course_work.await_count == 1  # type: ignore[attr-defined]
+    assert 2 <= len(headings) <= 12
+    assert len({" ".join(item.casefold().split()) for item in headings}) == len(headings)
+    assert COURSE_WORK_AUTOMATIC_SECTIONS not in headings
+    if language in {"ru", "en"}:
+        assert not {"Nazariy asoslar", "Amaliy tahlil", "Tavsiyalar"}.intersection(headings)
+
+
+@pytest.mark.parametrize(
+    ("language", "subject", "topic", "sections"),
+    [
+        (
+            "ru",
+            "Информатика",
+            "Алгоритмическое мышление",
+            ("Авторский обзор", "Практический разбор", "Контроль качества"),
+        ),
+        (
+            "en",
+            "Computer Science",
+            "Algorithmic thinking",
+            ("Custom overview", "Applied investigation", "Quality controls"),
+        ),
+    ],
+)
+async def test_production_mock_preserves_explicit_course_sections_exactly(
+    language: Literal["ru", "en"],
+    subject: str,
+    topic: str,
+    sections: tuple[str, ...],
+) -> None:
+    provider = build_ai_provider(Settings(ai_provider="mock", ai_api_key=SecretStr("test-key")))
+    provider.generate_course_work = AsyncMock(wraps=provider.generate_course_work)  # type: ignore[method-assign]
+    request = CourseWorkGenerationRequest(
+        subject=subject,
+        topic=topic,
+        sections="; ".join(sections),
+        language=language,
+        length="short",
+    )
+
+    result = await provider.generate_course_work(request)
+
+    assert provider.generate_course_work.await_count == 1  # type: ignore[attr-defined]
+    assert tuple(chapter.heading for chapter in result.chapters) == sections
 
 
 async def test_openai_provider_uses_strict_course_work_schema_and_validator() -> None:

@@ -133,6 +133,9 @@ class _QuizLabels(TypedDict):
 
 
 class MockAIProvider:
+    def set_quiz_call_reserver(self, reserver: object) -> None:
+        del reserver
+
     async def generate_outline(self, request: PresentationRequest) -> Outline:
         titles = _SECTION_TITLES[request.language]
         slides: list[OutlineSlide] = []
@@ -396,7 +399,7 @@ class MockAIProvider:
         self, request: CourseWorkGenerationRequest
     ) -> CourseWorkDocument:
         minimum = {"short": 3, "medium": 5, "long": 7}[request.length]
-        headings = list(requested_course_sections(request.sections))
+        headings = list(requested_course_sections(request.sections, language=request.language))
         fallback_headings = {
             "uz": [
                 "Konseptual yondashuv",

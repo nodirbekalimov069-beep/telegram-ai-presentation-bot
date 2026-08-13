@@ -20,6 +20,14 @@ class CourseWorkChatMessage(TypedDict):
     content: str
 
 
+COURSE_WORK_AUTOMATIC_SECTIONS = "__automatic_sections__"
+_AUTOMATIC_COURSE_SECTIONS = {
+    "uz": ("Nazariy asoslar", "Amaliy tahlil", "Tavsiyalar"),
+    "ru": ("Теоретические основы", "Практический анализ", "Рекомендации"),
+    "en": ("Theoretical foundations", "Practical analysis", "Recommendations"),
+}
+
+
 class CourseWorkGenerationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, str_strip_whitespace=True)
 
@@ -39,7 +47,7 @@ class CourseWorkGenerationRequest(BaseModel):
 
     @model_validator(mode="after")
     def sections_are_well_formed(self) -> "CourseWorkGenerationRequest":
-        requested_course_sections(self.sections)
+        requested_course_sections(self.sections, language=self.language)
         return self
 
 
@@ -955,9 +963,13 @@ def _validate_authored_body_language(
             raise AIContractError("course-work body language does not match the request")
 
 
-def requested_course_sections(value: str) -> tuple[str, ...]:
+def requested_course_sections(
+    value: str, *, language: Literal["uz", "ru", "en"] = "uz"
+) -> tuple[str, ...]:
     """Parse a bounded user outline without treating it as executable instructions."""
 
+    if value == COURSE_WORK_AUTOMATIC_SECTIONS:
+        return _AUTOMATIC_COURSE_SECTIONS[language]
     parts = tuple(
         " ".join(item.split()) for item in _SECTION_SEPARATOR.split(value) if item.strip()
     )
@@ -1067,7 +1079,8 @@ def validate_course_work_against_request(
     if len(document.chapters) < rules["minimum_chapters"]:
         raise AIContractError("course-work section count is shorter than requested")
 
-    requested = tuple(_normalize(item) for item in requested_course_sections(request.sections))
+    requested_sections = requested_course_sections(request.sections, language=request.language)
+    requested = tuple(_normalize(item) for item in requested_sections)
     artifact_headings = tuple(_normalize(chapter.heading) for chapter in document.chapters)
     fixed_headings = {
         "kirish",
@@ -1196,7 +1209,14 @@ general analysis. Do not return markdown, commentary, raw analysis, or text outs
 
 
 def build_course_work_messages(request: CourseWorkGenerationRequest) -> list[CourseWorkChatMessage]:
+    payload = request.model_dump()
+    payload["sections"] = "; ".join(
+        requested_course_sections(request.sections, language=request.language)
+    )
     return [
         {"role": "system", "content": _SYSTEM_INSTRUCTION},
-        {"role": "user", "content": request.model_dump_json()},
+        {
+            "role": "user",
+            "content": CourseWorkGenerationRequest.model_construct(**payload).model_dump_json(),
+        },
     ]

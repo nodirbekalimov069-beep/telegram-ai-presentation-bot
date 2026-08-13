@@ -1,5 +1,6 @@
 """AI provider protocol."""
 
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from modules.ai.contracts import (
@@ -23,6 +24,8 @@ from modules.ai.write_text_contracts import WriteTextDocument, WriteTextGenerati
 
 
 class AIProvider(Protocol):
+    def set_quiz_call_reserver(self, reserver: Callable[[], Awaitable[None]]) -> None: ...
+
     async def generate_outline(self, request: PresentationRequest) -> Outline: ...
 
     async def generate_content(self, request: ContentGenerationRequest) -> GeneratedContent: ...

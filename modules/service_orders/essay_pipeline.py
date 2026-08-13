@@ -28,6 +28,7 @@ from modules.ai.translation_contracts import (
 )
 from modules.ai.write_text_contracts import WriteTextGenerationRequest
 from modules.ai.providers.base import AIProvider
+from modules.ai.providers.errors import ProviderCallBudgetExhausted
 from modules.files.storage import Storage
 from modules.service_orders.catalog import ServiceType
 from modules.service_orders.course_work_documents import CourseWorkDocumentRenderer
@@ -197,6 +198,10 @@ class EssayPipeline:
         if lease is None:
             return
         token, user_id, request, pending_keys = lease
+        if self._profile.service_type is ServiceType.QUIZ:
+            self._provider.set_quiz_call_reserver(
+                lambda: self._reserve_quiz_provider_call(order_id, token)
+            )
         if pending_keys:
             try:
                 await self._cleanup_attempt_artifacts(pending_keys, user_id=user_id)
@@ -235,6 +240,14 @@ class EssayPipeline:
                     document = await self._provider.generate_document(request)  # type: ignore[arg-type]
                 else:
                     raise RuntimeError("unsupported document generation service")
+            except ProviderCallBudgetExhausted as exc:
+                await self._mark_terminal(
+                    order_id,
+                    token,
+                    error_code="AI_PROVIDER_BUDGET_EXHAUSTED",
+                    user_message=self._generation_failure_message,
+                )
+                raise EssayTerminalError("quiz provider budget exhausted") from exc
             except AIContractError as exc:
                 if self._profile.service_type in {
                     ServiceType.REWRITE,
@@ -794,6 +807,16 @@ class EssayPipeline:
             order.retry_count += 1
             order.error_code = error_code
             order.error_message = user_message
+
+    async def _reserve_quiz_provider_call(self, order_id: int, token: str) -> None:
+        async with self._session_factory() as session, session.begin():
+            order = await self._owned_lease(session, order_id, token)
+            metadata = dict(order.generation_metadata)
+            calls = int(metadata.get("quiz_provider_calls", 0))
+            if calls >= 4:
+                raise ProviderCallBudgetExhausted("quiz provider call budget exhausted")
+            metadata["quiz_provider_calls"] = calls + 1
+            order.generation_metadata = metadata
 
     async def _mark_terminal(
         self,

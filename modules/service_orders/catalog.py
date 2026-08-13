@@ -6,6 +6,10 @@ from types import MappingProxyType
 from typing import Any
 
 from modules.ai.rewrite_contracts import RewriteGenerationRequest, detect_rewrite_language
+from modules.ai.course_work_contracts import (
+    COURSE_WORK_AUTOMATIC_SECTIONS,
+    requested_course_sections,
+)
 from modules.ai.document_contracts import DocumentGenerationRequest
 from modules.ai.translation_contracts import TranslationGenerationRequest
 from modules.ai.write_text_contracts import (
@@ -212,6 +216,15 @@ PRICING_CATEGORIES = (
 def _validate_service_field_semantics(
     service_type: ServiceType, field_name: str, value: Any
 ) -> Any:
+    if service_type is ServiceType.COURSE_WORK and field_name == "sections":
+        normalized = " ".join(str(value).split())
+        if normalized.casefold() in {
+            "bo‘limlarni o‘zing top".casefold(),
+            "bo'limlarni o'zing top".casefold(),
+        }:
+            return COURSE_WORK_AUTOMATIC_SECTIONS
+        requested_course_sections(normalized)
+        return normalized
     if service_type is ServiceType.REWRITE and field_name == "text" and value:
         detect_rewrite_language(str(value))
         return value

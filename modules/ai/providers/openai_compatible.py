@@ -5,7 +5,7 @@ import hashlib
 import logging
 import math
 import unicodedata
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from functools import partial
 from typing import TypeVar, cast
 
@@ -103,12 +103,18 @@ from modules.ai.presentation_agent import (
     AgentReply,
     build_agent_messages,
 )
+from modules.ai.providers.errors import ProviderCallBudgetExhausted
 
 StructuredResponse = TypeVar("StructuredResponse", bound=BaseModel)
 _TRANSIENT_ERRORS = (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError)
 _CONTENT_BATCH_SIZE = 5
 _MAX_COMPLETION_TOKENS = 8192
 logger = logging.getLogger(__name__)
+
+
+class _StructuredResponseBudgetExhausted(AIContractError):
+    """The bounded structured-response attempt budget is exhausted."""
+
 
 _UZBEK_CYRILLIC_TO_LATIN = str.maketrans(
     {
@@ -229,6 +235,7 @@ class OpenAICompatibleProvider:
         self._max_retries = max_retries
         self._retry_base_delay_seconds = retry_base_delay_seconds
         self._semantic_risk_boundary = semantic_risk_boundary
+        self._quiz_call_reserver: Callable[[], Awaitable[None]] | None = None
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=self._base_url,
@@ -239,6 +246,9 @@ class OpenAICompatibleProvider:
     async def aclose(self) -> None:
         await self._client.close()
 
+    def set_quiz_call_reserver(self, reserver: Callable[[], Awaitable[None]]) -> None:
+        self._quiz_call_reserver = reserver
+
     async def _request_structured(
         self,
         *,
@@ -247,6 +257,8 @@ class OpenAICompatibleProvider:
         response_validator: Callable[[StructuredResponse], StructuredResponse] | None = None,
         contract_retry_builder: Callable[[str], str] | None = None,
         retry_invalid_response: bool = True,
+        max_attempts: int | None = None,
+        before_outbound: Callable[[], Awaitable[None]] | None = None,
         temperature: float = 0.2,
     ) -> StructuredResponse:
         if not math.isfinite(temperature) or not 0 <= temperature <= 2:
@@ -265,8 +277,11 @@ class OpenAICompatibleProvider:
             len(request_messages),
             system_prompt_sha256,
         )
-        for attempt in range(self._max_retries + 1):
+        attempt_limit = self._max_retries + 1 if max_attempts is None else max_attempts
+        for attempt in range(attempt_limit):
             try:
+                if before_outbound is not None:
+                    await before_outbound()
                 completion = await self._client.chat.completions.parse(
                     model=self._model,
                     messages=request_messages,
@@ -275,13 +290,13 @@ class OpenAICompatibleProvider:
                     max_tokens=_MAX_COMPLETION_TOKENS,
                 )
             except _TRANSIENT_ERRORS:
-                if attempt >= self._max_retries:
+                if attempt + 1 >= attempt_limit:
                     raise
                 await asyncio.sleep(self._retry_base_delay_seconds * (2**attempt))
                 continue
             except APIStatusError as exc:
                 transient_status = exc.status_code in {408, 409} or exc.status_code >= 500
-                if not transient_status or attempt >= self._max_retries:
+                if not transient_status or attempt + 1 >= attempt_limit:
                     raise
                 await asyncio.sleep(self._retry_base_delay_seconds * (2**attempt))
                 continue
@@ -291,8 +306,8 @@ class OpenAICompatibleProvider:
                         f"AI provider returned invalid {response_format.__name__}: "
                         f"{_validation_error_summary(exc)}"
                     ) from exc
-                if attempt >= self._max_retries:
-                    raise AIContractError(
+                if attempt + 1 >= attempt_limit:
+                    raise _StructuredResponseBudgetExhausted(
                         "AI provider repeatedly returned an invalid structured response"
                     ) from exc
                 if response_format.__name__ == "QuizDocument":
@@ -330,8 +345,10 @@ class OpenAICompatibleProvider:
             if message.parsed is None:
                 if not retry_invalid_response:
                     raise AIContractError("AI provider returned no structured response")
-                if attempt >= self._max_retries:
-                    raise AIContractError("AI provider repeatedly returned no structured response")
+                if attempt + 1 >= attempt_limit:
+                    raise _StructuredResponseBudgetExhausted(
+                        "AI provider repeatedly returned no structured response"
+                    )
                 request_messages.append(
                     cast(
                         ChatCompletionMessageParam,
@@ -352,8 +369,8 @@ class OpenAICompatibleProvider:
                 except AIContractError as exc:
                     if not retry_invalid_response:
                         raise
-                    if attempt >= self._max_retries:
-                        raise AIContractError(
+                    if attempt + 1 >= attempt_limit:
+                        raise _StructuredResponseBudgetExhausted(
                             "AI provider repeatedly returned a response violating the request contract"
                         ) from exc
                     if contract_retry_builder is not None:
@@ -481,14 +498,31 @@ class OpenAICompatibleProvider:
         return materialize_summary_selection(selection, request=request)
 
     async def generate_quiz(self, request: QuizGenerationRequest) -> QuizDocument:
-        return await self._request_structured(
-            messages=cast(
-                Iterable[ChatCompletionMessageParam],
-                build_quiz_messages(request),
-            ),
-            response_format=QuizDocument,
-            response_validator=partial(validate_quiz_against_request, request=request),
-        )
+        try:
+            return await self._request_structured(
+                messages=cast(
+                    Iterable[ChatCompletionMessageParam],
+                    build_quiz_messages(request),
+                ),
+                response_format=QuizDocument,
+                response_validator=partial(validate_quiz_against_request, request=request),
+                max_attempts=4,
+                before_outbound=self._quiz_call_reserver,
+            )
+        except _TRANSIENT_ERRORS as exc:
+            raise ProviderCallBudgetExhausted(
+                "quiz provider outbound-call budget exhausted"
+            ) from exc
+        except APIStatusError as exc:
+            if exc.status_code not in {408, 409} and exc.status_code < 500:
+                raise
+            raise ProviderCallBudgetExhausted(
+                "quiz provider outbound-call budget exhausted"
+            ) from exc
+        except _StructuredResponseBudgetExhausted as exc:
+            raise ProviderCallBudgetExhausted(
+                "quiz provider structured-response budget exhausted"
+            ) from exc
 
     async def generate_write_text(self, request: WriteTextGenerationRequest) -> WriteTextDocument:
         return await self._request_structured(

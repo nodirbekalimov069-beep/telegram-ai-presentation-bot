@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from modules.ai.contracts import AIContractError
 from modules.ai.course_work_contracts import (
+    COURSE_WORK_AUTOMATIC_SECTIONS,
     CourseWorkChapter,
     CourseWorkDocument,
     CourseWorkGenerationRequest,
@@ -83,6 +84,17 @@ def test_requested_course_sections_are_bounded_and_deterministic() -> None:
         requested_course_sections("Faqat bitta bo‘lim")
     with pytest.raises(ValueError, match="sections"):
         requested_course_sections(";".join(f"Bo‘lim {index}" for index in range(13)))
+
+
+def test_course_work_automatic_sections_use_app_owned_headings() -> None:
+    request = _request().model_copy(update={"sections": COURSE_WORK_AUTOMATIC_SECTIONS})
+
+    assert requested_course_sections(request.sections) == (
+        "Nazariy asoslar",
+        "Amaliy tahlil",
+        "Tavsiyalar",
+    )
+    assert CourseWorkGenerationRequest.model_validate(request.model_dump()) == request
 
 
 def test_course_work_contract_accepts_bound_safe_document() -> None:
