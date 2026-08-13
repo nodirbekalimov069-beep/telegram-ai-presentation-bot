@@ -38,7 +38,7 @@ EXPECTED_FIELDS = {
     ServiceType.WRITE_TEXT: ("topic", "text_type", "style", "length", "language", "requirements"),
     ServiceType.REWRITE: ("text", "mode"),
     ServiceType.TRANSLATE: ("source_language", "text", "target_language"),
-    ServiceType.DOCUMENT: ("document_type", "details"),
+    ServiceType.DOCUMENT: ("document_type", "details", "language"),
 }
 
 
@@ -58,6 +58,7 @@ def test_catalog_defines_all_requested_services_and_fields() -> None:
                 ServiceType.WRITE_TEXT,
                 ServiceType.REWRITE,
                 ServiceType.TRANSLATE,
+                ServiceType.DOCUMENT,
             }
         )
         assert definition.large_job is (service_type is ServiceType.COURSE_WORK)
@@ -127,6 +128,154 @@ def test_write_text_catalog_rejects_stopword_only_requirements_before_order() ->
         )
 
 
+def test_document_catalog_rejects_bounded_authority_and_confusable_relations() -> None:
+    unsafe = (
+        ("en", "The chancellor approved this document for immediate use."),
+        ("en", "This document was authorized by the vice-chancellor after review."),
+        ("en", "The dіrector approved this document for immediate use."),
+        ("en", "The dean apprоved this document for immediate use."),
+        ("uz", "Mudir ushbu hujjatni tasdiqladi va darhol kuchga kiritdi."),
+        ("uz", "Ushbu hujjat mudir tomonidan tasdiqlangan va kuchga kiritilgan."),
+        ("uz", "Prorektor ushbu hujjatni ma’qullagan va rasmiy deb e’lon qilgan."),
+        ("uz", "Mudir ushbu hujjatni tasdіqladi va darhol kuchga kiritdi."),
+        ("ru", "Проректор утвердил этот документ для немедленного применения."),
+        ("ru", "Этот документ был утвержден вице-ректором после проверки."),
+        ("ru", "Канцлер согласовал этот документ и придал ему официальную силу."),
+        ("ru", "Проректор утвeрдил этот документ для немедленного применения."),
+    )
+    for language, details in unsafe:
+        with pytest.raises(ValueError):
+            validate_service_request(
+                ServiceType.DOCUMENT,
+                {
+                    "document_type": "official_letter",
+                    "details": details,
+                    "language": language,
+                },
+            )
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector, A. Smith, approved this document for immediate use."),
+        ("en", "The rector, A. B. Smith, approved this document for immediate use."),
+        ("uz", "Rektor A. Karimov ushbu hujjatni tasdiqladi va kuchga kiritdi."),
+        ("uz", "Rektor A. B. Karimov ushbu hujjatni tasdiqladi va kuchga kiritdi."),
+        ("ru", "Директор И. Иванов утвердил этот документ для немедленного применения."),
+        ("ru", "Директор И. И. Иванов утвердил этот документ для применения."),
+    ],
+)
+def test_document_catalog_rejects_authority_relation_across_personal_initials(
+    language: str, details: str
+) -> None:
+    with pytest.raises(ValueError):
+        validate_service_request(
+            ServiceType.DOCUMENT,
+            {
+                "document_type": "official_letter",
+                "details": details,
+                "language": language,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector, Rev. Smith, approved this document for immediate use."),
+        ("en", "This document was approved by Rev. Smith, the rector after review."),
+        ("uz", "Rektor, dots. Karimov, ushbu hujjatni tasdiqladi va kuchga kiritdi."),
+        ("uz", "Ushbu hujjatni tasdiqladi dots. Karimov, rektor, batafsil ko‘rib chiqib."),
+        ("ru", "Директор, проф. Иванов, утвердил этот документ для применения."),
+        ("ru", "Этот документ утвердил проф. Иванов, директор, после проверки."),
+    ],
+)
+def test_document_catalog_rejects_authority_relation_across_title_abbreviation(
+    language: str, details: str
+) -> None:
+    with pytest.raises(ValueError):
+        validate_service_request(
+            ServiceType.DOCUMENT,
+            {
+                "document_type": "official_letter",
+                "details": details,
+                "language": language,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector met Dr. This document was approved by the committee after review."),
+        ("en", "The rector met Prof. This document was approved by the committee after review."),
+        ("uz", "Rektor dots. Bu hujjat komissiya tomonidan tasdiqlandi."),
+        ("ru", "Директор встретил проф. Этот документ утвердила комиссия."),
+        ("en", "The rector met Ph.D. This document was approved by the committee."),
+        ("en", "The rector met M.D. This document was approved by the committee."),
+        ("en", "The rector met B.Sc. This document was approved by the committee."),
+        ("en", "The rector met M.Sc. This document was approved by the committee."),
+    ],
+)
+def test_document_catalog_accepts_context_free_abbreviation_boundaries(
+    language: str, details: str
+) -> None:
+    payload = validate_service_request(
+        ServiceType.DOCUMENT,
+        {"document_type": "official_letter", "details": details, "language": language},
+    )
+    assert payload["details"] == details
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector, Dr. Smith, approved this document for immediate use."),
+        ("en", "This document was approved by Prof. Smith, the rector after review."),
+        ("uz", "Rektor, dots. Karimov, ushbu hujjatni tasdiqladi va kuchga kiritdi."),
+        ("ru", "Этот документ утвердил проф. Иванов, директор, после проверки."),
+        ("en", "The rector, Alex Smith, Ph.D., approved this document after review."),
+        ("en", "This document was approved by Alex Smith, M.D., the rector after review."),
+        ("en", "The rector, Alex Smith, B.Sc., approved this document after review."),
+        ("en", "This document was approved by Alex Smith, M.Sc., the rector after review."),
+    ],
+)
+def test_document_catalog_rejects_contextual_name_abbreviation_relation(
+    language: str, details: str
+) -> None:
+    with pytest.raises(ValueError):
+        validate_service_request(
+            ServiceType.DOCUMENT,
+            {"document_type": "official_letter", "details": details, "language": language},
+        )
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The dіrесtor approved this document for immediate use."),
+        ("en", "This document was аррrоved by the director after review."),
+        ("uz", "Dіrекtor ushbu hujjatni tasdiqladi va kuchga kiritdi."),
+        ("uz", "Ushbu hujjatni tаѕdіqladi direktor va kuchga kiritdi."),
+        ("ru", "Диpeктoр утвердил этот документ для немедленного применения."),
+        ("ru", "Этот документ yтвepдил директор после проверки."),
+    ],
+)
+def test_document_catalog_rejects_many_script_substitution_authority_relation(
+    language: str, details: str
+) -> None:
+    with pytest.raises(ValueError):
+        validate_service_request(
+            ServiceType.DOCUMENT,
+            {
+                "document_type": "official_letter",
+                "details": details,
+                "language": language,
+            },
+        )
+
+
 def test_choice_fields_have_short_deterministic_values() -> None:
     for definition in SERVICE_CATALOG.values():
         for field in definition.fields:
@@ -162,7 +311,7 @@ def test_rewrite_catalog_treats_source_instructions_as_data_but_rejects_foreign_
         )
 
 
-def test_rewrite_and_translate_phase_7_production_document_profiles() -> None:
+def test_phase_8_adds_only_document_to_production_document_profiles() -> None:
     assert {
         "essay",
         "independent",
@@ -172,6 +321,7 @@ def test_rewrite_and_translate_phase_7_production_document_profiles() -> None:
         "write",
         "rewrite",
         "translate",
+        "document",
     } == (PRODUCTION_DOCUMENT_SERVICE_TYPES)
     summary = document_service_profile(ServiceType.SUMMARY)
     assert summary.artifact_stem == "konspekt"
@@ -191,8 +341,57 @@ def test_rewrite_and_translate_phase_7_production_document_profiles() -> None:
     assert translation.artifact_stem == "tarjima"
     assert translation.requested_event == "service.translate.requested"
     assert translation.cleanup_event == "service.translate.cleanup_requested"
-    with pytest.raises(ValueError, match="no production document profile"):
-        document_service_profile(ServiceType.DOCUMENT)
+    document = document_service_profile(ServiceType.DOCUMENT)
+    assert document.artifact_stem == "hujjat"
+    assert document.requested_event == "service.document.requested"
+    assert document.cleanup_event == "service.document.cleanup_requested"
+
+
+def test_document_catalog_is_bounded_and_rejects_unknown_controls() -> None:
+    payload = validate_service_request(
+        ServiceType.DOCUMENT,
+        {
+            "document_type": "application",
+            "details": (
+                "Toshkent davlat universiteti rektoriga. Men, Ali Valiyev, "
+                "2026-yil 15-avgustdan uch kunlik ta’til so‘rayman."
+            ),
+            "language": "uz",
+        },
+    )
+    assert payload["language"] == "uz"
+    with pytest.raises(ValueError, match="unknown fields"):
+        validate_service_request(ServiceType.DOCUMENT, {**payload, "seal": "official"})
+    with pytest.raises(ValueError, match="details"):
+        validate_service_request(
+            ServiceType.DOCUMENT,
+            {"document_type": "application", "details": "x" * 4001, "language": "uz"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("document_type", ["application"]),
+        ("details", ["Toshkent davlat universiteti rektoriga."] * 2),
+        ("details", {"text": "Toshkent davlat universiteti rektoriga."}),
+        ("details", True),
+        ("language", {"code": "uz"}),
+    ],
+)
+def test_document_catalog_rejects_non_string_fields_before_normalization(
+    field_name: str, value: object
+) -> None:
+    payload: dict[str, object] = {
+        "document_type": "application",
+        "details": "Toshkent davlat universiteti rektoriga ta’til arizasi.",
+        "language": "uz",
+    }
+    payload[field_name] = value
+    with pytest.raises(ValueError, match=f"{field_name} must be a string"):
+        validate_field_value(ServiceType.DOCUMENT, field_name, value)
+    with pytest.raises(ValueError, match=f"{field_name} must be a string"):
+        validate_service_request(ServiceType.DOCUMENT, payload)
 
 
 def test_translation_catalog_rejects_unknown_controls_and_same_language() -> None:
@@ -260,3 +459,160 @@ def test_pricing_catalog_is_centralized_and_does_not_invent_unknown_prices() -> 
     presentation, *unknown_price_categories = PRICING_CATEGORIES
     assert presentation.price_source == "database_plans"
     assert all(item.price_uzs is None for item in unknown_price_categories)
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector Dr. Smith approved this document after review."),
+        ("en", "The rector met Dr. Smith approved this document after review."),
+        ("en", "This document was approved by Prof. Alice Smith the rector after review."),
+        ("uz", "Rektor dots. Ali Karimov ushbu hujjatni tasdiqladi va kuchga kiritdi."),
+        ("uz", "Ushbu hujjatni tasdiqladi dots. Ali Karimov rektor batafsil ko‘rib chiqib."),
+        ("ru", "Директор проф. Иван Иванов утвердил этот документ после проверки."),
+        ("ru", "Этот документ утвердил проф. Иван Иванов директор после проверки."),
+    ],
+)
+def test_document_catalog_rejects_bounded_title_name_without_commas(
+    language: str, details: str
+) -> None:
+    with pytest.raises(ValueError):
+        validate_service_request(
+            ServiceType.DOCUMENT,
+            {"document_type": "official_letter", "details": details, "language": language},
+        )
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector met Dr. This document was approved by the committee after review."),
+        ("en", "The rector met Prof. That document was approved by the committee after review."),
+        ("uz", "Rektor dots. Ushbu hujjat komissiya tomonidan tasdiqlandi."),
+        ("ru", "Директор встретил проф. Это документ утвердила комиссия."),
+        ("ru", "Директор встретил проф. Этот документ утвердила комиссия."),
+    ],
+)
+def test_document_catalog_accepts_sentence_openers_after_context_free_titles(
+    language: str, details: str
+) -> None:
+    payload = validate_service_request(
+        ServiceType.DOCUMENT,
+        {"document_type": "official_letter", "details": details, "language": language},
+    )
+    assert payload["details"] == details
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The dжrector approved the meeting agenda after committee review."),
+        ("en", "The dжrесtor approved the meeting agenda after committee review."),
+        ("uz", "Tжsdiq jarayoni direktor ishtirok etgan yig‘ilishda muhokama qilindi."),
+        ("ru", "Директор уxвердил только расписание планового заседания комиссии."),
+    ],
+)
+def test_document_catalog_accepts_unrelated_cross_script_controls(
+    language: str, details: str
+) -> None:
+    payload = validate_service_request(
+        ServiceType.DOCUMENT,
+        {"document_type": "official_letter", "details": details, "language": language},
+    )
+    assert payload["details"] == details
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector said: “Done.”))) This document was approved by committee."),
+        ("en", "This document was approved by committee. «Done.»]))) The rector attended later."),
+        ("uz", "Rektor aytdi: «Tayyor.»]))) Bu hujjat komissiya tomonidan tasdiqlandi."),
+        ("uz", "Hujjat komissiya tomonidan tasdiqlandi. «Tayyor.»]))) Rektor keyin qatnashdi."),
+        ("ru", "Директор сказал: «Готово.»]))) Этот документ утвердила комиссия."),
+        ("ru", "Документ утвердила комиссия. «Готово.»]))) Директор пришёл позже."),
+    ],
+)
+def test_document_catalog_accepts_many_closing_delimiter_boundaries(
+    language: str, details: str
+) -> None:
+    payload = validate_service_request(
+        ServiceType.DOCUMENT,
+        {"document_type": "official_letter", "details": details, "language": language},
+    )
+    assert payload["details"] == details
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector, D.Phil. approved this document after review."),
+        ("en", "This document was approved by Alex Smith, Ed.D., the rector after review."),
+        ("uz", "Rektor, LL.M. ushbu hujjatni tasdiqladi va kuchga kiritdi."),
+        ("uz", "Ushbu hujjatni tasdiqladi Ali Karimov, MBA., rektor batafsil ko‘rib chiqib."),
+        ("ru", "Директор, D.Phil. утвердил этот документ после проверки."),
+        ("ru", "Этот документ утвердил Иван Иванов, Ed.D., директор после проверки."),
+    ],
+)
+def test_document_catalog_rejects_authority_across_bounded_degree_shape(
+    language: str, details: str
+) -> None:
+    with pytest.raises(ValueError):
+        validate_service_request(
+            ServiceType.DOCUMENT,
+            {"document_type": "official_letter", "details": details, "language": language},
+        )
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector A. B. C. D. Smith approved this document after review."),
+        ("uz", "Rektor A. B. C. D. E. F. G. H. Karimov ushbu hujjatni tasdiqladi."),
+        ("ru", "Директор И. И. И. И. И. И. И. И. Иванов утвердил этот документ."),
+        ("en", "The rector A. B. C. D. E. F. G. H. I. Smith approved this document."),
+    ],
+)
+def test_document_catalog_rejects_bounded_or_ambiguous_initial_runs(
+    language: str, details: str
+) -> None:
+    with pytest.raises(ValueError):
+        validate_service_request(
+            ServiceType.DOCUMENT,
+            {"document_type": "official_letter", "details": details, "language": language},
+        )
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The dіrectorж approved the meeting agenda after committee review."),
+        ("uz", "Direktor tаѕdіqж jarayonini yig‘ilishda batafsil muhokama qildi."),
+    ],
+)
+def test_document_catalog_accepts_unrelated_confusable_suffix_controls(
+    language: str, details: str
+) -> None:
+    payload = validate_service_request(
+        ServiceType.DOCUMENT,
+        {"document_type": "official_letter", "details": details, "language": language},
+    )
+    assert payload["details"] == details
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The dіrectors approved this document for immediate use."),
+        ("uz", "Dіrекtorlar ushbu hujjatni tasdiqladi va kuchga kiritdi."),
+        ("ru", "Диpeктoры утвердили этот документ для немедленного применения."),
+    ],
+)
+def test_document_catalog_rejects_confusable_role_locale_morphology(
+    language: str, details: str
+) -> None:
+    with pytest.raises(ValueError):
+        validate_service_request(
+            ServiceType.DOCUMENT,
+            {"document_type": "official_letter", "details": details, "language": language},
+        )

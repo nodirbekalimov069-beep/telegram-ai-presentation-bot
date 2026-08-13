@@ -96,6 +96,7 @@ async def start_service(
         ServiceType.WRITE_TEXT: "service.write_notice",
         ServiceType.REWRITE: "service.rewrite_notice",
         ServiceType.TRANSLATE: "service.translate_notice",
+        ServiceType.DOCUMENT: "service.document_notice",
     }
     await callback.message.answer(
         localizer.text(
@@ -537,6 +538,13 @@ async def submit_service_order(
                 request_payload=dict(data["fields"]),
                 idempotency_key=f"svc:{callback.from_user.id}:{token}",
             )
+        elif service_type is ServiceType.DOCUMENT:
+            await service.create_document_order(
+                session,
+                telegram_user_id=callback.from_user.id,
+                request_payload=dict(data["fields"]),
+                idempotency_key=f"svc:{callback.from_user.id}:{token}",
+            )
         else:
             await service.create_preview_order(
                 session,
@@ -568,6 +576,8 @@ async def submit_service_order(
         created_key = "service.rewrite_created"
     elif service_type is ServiceType.TRANSLATE:
         created_key = "service.translate_created"
+    elif service_type is ServiceType.DOCUMENT:
+        created_key = "service.document_created"
     else:
         created_key = "service.created"
     await callback.message.answer(localizer.text(language, created_key))

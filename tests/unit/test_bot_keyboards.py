@@ -1,8 +1,14 @@
 from apps.bot.handlers.common import main_menu_text
-from apps.bot.keyboards import choices_keyboard, main_menu_keyboard, resolve_choice
+from apps.bot.keyboards import (
+    choices_keyboard,
+    main_menu_keyboard,
+    resolve_choice,
+    service_confirmation_keyboard,
+)
 from apps.bot.localization import Localizer
 from apps.bot.menu_labels import menu_labels
 from apps.bot.options import KNOWLEDGE_LEVELS, PLAN_CODES, directions_for
+from modules.service_orders.catalog import ServiceType
 
 
 def test_main_menu_contains_required_actions_and_admin_is_conditional() -> None:
@@ -98,3 +104,20 @@ def test_choice_keyboard_localizes_labels_and_resolves_canonical_values() -> Non
     plan_labels = {button.text for row in plan_keyboard.keyboard for button in row}
     assert "Premium+" in plan_labels
     assert "premium_plus" not in plan_labels
+
+
+def test_document_confirmation_matches_prepare_notice_in_all_languages() -> None:
+    localizer = Localizer.load_default()
+
+    for language in ("uz", "ru", "en"):
+        prepare_label = localizer.text(language, "service.essay.submit")
+        notice = localizer.text(language, "service.document_notice")
+        keyboard = service_confirmation_keyboard(
+            token="document-token",
+            language=language,
+            localizer=localizer,
+            service_type=ServiceType.DOCUMENT,
+        )
+
+        assert prepare_label in notice
+        assert keyboard.inline_keyboard[0][0].text == prepare_label

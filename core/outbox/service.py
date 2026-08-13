@@ -73,6 +73,7 @@ class OutboxService:
                 "service.write.cleanup_requested",
                 "service.rewrite.cleanup_requested",
                 "service.translate.cleanup_requested",
+                "service.document.cleanup_requested",
             }
             publisher = publishers.get(event.event_type)
             if publisher is None:

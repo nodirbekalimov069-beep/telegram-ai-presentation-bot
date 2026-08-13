@@ -14,6 +14,7 @@ from core.config import Settings
 from core.database.base import Base
 import core.database.models  # noqa: F401
 from core.outbox.models import OutboxEvent
+from modules.ai.providers.mock import MockAIProvider
 from modules.service_orders.catalog import ServiceType
 from modules.service_orders.models import ServiceOrder
 from modules.service_orders.service import ServiceOrderService, ServiceOrderStatus
@@ -98,6 +99,514 @@ async def test_closed_successor_cannot_create_direct_preview_order(
             )
         count = await session.scalar(select(func.count(ServiceOrder.id)))
     assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_document_order_is_idempotent_with_one_transactional_outbox_event(
+    service_order_db,
+) -> None:  # type: ignore[no-untyped-def]
+    service = ServiceOrderService()
+    request = {
+        "document_type": "application",
+        "details": (
+            "Toshkent davlat universiteti rektoriga. Men, Ali Valiyev, "
+            "2026-yil 15-avgustdan uch kunlik ta’til so‘rayman."
+        ),
+        "language": "uz",
+    }
+    async with service_order_db() as session:
+        first = await service.create_document_order(
+            session,
+            telegram_user_id=777,
+            request_payload=request,
+            idempotency_key="document-test-0001",
+        )
+    async with service_order_db() as session:
+        duplicate = await service.create_document_order(
+            session,
+            telegram_user_id=777,
+            request_payload=request,
+            idempotency_key="document-test-0001",
+        )
+        events = (await session.scalars(select(OutboxEvent))).all()
+
+    assert duplicate.id == first.id
+    assert first.service_type == ServiceType.DOCUMENT.value
+    assert first.status == ServiceOrderStatus.QUEUED
+    assert first.title == "application"
+    assert len(events) == 1
+    assert events[0].event_type == "service.document.requested"
+    assert events[0].payload == {"service_order_id": first.id}
+
+
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector met Dr. This document was approved by the committee after review."),
+        ("en", "The rector met Prof. This document was approved by the committee after review."),
+        ("uz", "Rektor dots. Bu hujjat komissiya tomonidan tasdiqlandi."),
+        ("ru", "Директор встретил проф. Этот документ утвердила комиссия."),
+        ("en", "The rector met Ph.D. This document was approved by the committee."),
+        ("en", "The rector met M.D. This document was approved by the committee."),
+        ("en", "The rector met B.Sc. This document was approved by the committee."),
+        ("en", "The rector met M.Sc. This document was approved by the committee."),
+    ],
+)
+async def test_document_context_free_abbreviation_boundary_creates_order(
+    service_order_db, language: str, details: str
+) -> None:  # type: ignore[no-untyped-def]
+    async with service_order_db() as session:
+        order = await ServiceOrderService().create_document_order(
+            session,
+            telegram_user_id=777,
+            request_payload={
+                "document_type": "official_letter",
+                "details": details,
+                "language": language,
+            },
+            idempotency_key="document-abbreviation-boundary",
+        )
+        order_count = await session.scalar(select(func.count(ServiceOrder.id)))
+        outbox_count = await session.scalar(select(func.count(OutboxEvent.id)))
+    assert order.normalized_request["details"] == details
+    assert order_count == 1
+    assert outbox_count == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "document_type": "official_letter",
+            "details": "Please add the rector signature and official seal to make this approved.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Rektor tasdiqladi. Imzo: A. Rasmiy muhr qo‘yildi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Утверждено директором. Подпись: А. Официальная печать поставлена.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The rector approved this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The rector approves this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The director authorizes this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Rektor ushbu hujjatni tasdiqladi va darhol kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Ushbu hujjatni tasdiqladi rektor va darhol kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Директор утвердил этот документ для немедленного применения.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Директор утверждает этот документ для немедленного применения.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Этот документ утвердил директор для немедленного применения.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Этот документ утверждает директор для немедленного применения.",
+            "language": "ru",
+        },
+        {
+            "document_type": "application",
+            "details": ["Toshkent davlat universiteti rektoriga."] * 2,
+            "language": "uz",
+        },
+        {
+            "document_type": "application",
+            "details": {"text": "Toshkent davlat universiteti rektoriga."},
+            "language": "uz",
+        },
+        {
+            "document_type": ["application"],
+            "details": "Toshkent davlat universiteti rektoriga ta’til arizasi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The rector, after reviewing all submitted materials and consulting "
+            "the university administrative committee, approved this document.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "This document was approved after full review of all submitted "
+            "materials and consultation with the university administrative committee by "
+            "the rector.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Rektor barcha taqdim etilgan materiallarni batafsil ko‘rib chiqib "
+            "va universitet ma’muriy kengashi bilan maslahatlashib, hujjatni tasdiqladi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Hujjatni tasdiqladi barcha taqdim etilgan materiallarni ko‘rib "
+            "chiqish va universitet ma’muriy kengashi bilan maslahatlashishdan keyin "
+            "rektor.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Директор после подробного рассмотрения всех представленных "
+            "материалов и консультации с административным советом университета утвердил "
+            "этот документ.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Этот документ утвердил после подробного рассмотрения всех "
+            "представленных материалов и консультации с административным советом "
+            "университета директор.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The rector, Ph.D. approved this document after reviewing the "
+            "submitted materials.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Ｔｈｅ ｒｅｃｔｏｒ ａｐｐｒｏｖｅｄ ｔｈｉｓ ｄｏｃｕｍｅｎｔ "
+            "ｆｏｒ ｉｍｍｅｄｉａｔｅ ｕｓｅ．",
+            "language": "en",
+        },
+        {"document_type": "other", "details": "\ufb03" * 4000, "language": "en"},
+        {"document_type": "other", "details": "A\u030a" * 10, "language": "en"},
+        {
+            "document_type": "official_letter",
+            "details": "The rector,\nafter reviewing all submitted materials, approved this document.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Rektor barcha materiallarni ko‘rib chiqib,\nhujjatni tasdiqladi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Директор после подробного рассмотрения материалов\nутвердил этот документ.",
+            "language": "ru",
+        },
+        {"document_type": "other", "details": " " * 19 + "a", "language": "en"},
+        {
+            "document_type": "official_letter",
+            "details": "The dean approved this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Dekan ushbu hujjatni tasdiqladi va darhol kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Декан утвердил этот документ для немедленного применения.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The dean endorsed this document as official and valid.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "This document was formally endorsed as valid by the dean.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Dekan ushbu hujjatni ma’qulladi va rasmiy kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Ushbu hujjatni rasmiy kuchga kiritish uchun dekan ma’qullagan.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Декан согласовал этот документ и придал ему официальную силу.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Этот документ был согласован деканом и получил официальную силу.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The dеan approved this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Dеkan ushbu hujjatni tasdiqladi va darhol kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Дeкан утвердил этот документ для немедленного применения.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The chancellor approved this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "This document was authorized by the vice-chancellor after review.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The dіrector approved this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The dean apprоved this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Mudir ushbu hujjatni tasdiqladi va darhol kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Ushbu hujjat mudir tomonidan tasdiqlangan va kuchga kiritilgan.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Prorektor ushbu hujjatni ma’qullagan va rasmiy deb e’lon qilgan.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Mudir ushbu hujjatni tasdіqladi va darhol kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Проректор утвердил этот документ для немедленного применения.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Этот документ был утвержден вице-ректором после проверки.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Канцлер согласовал этот документ и придал ему официальную силу.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Проректор утвeрдил этот документ для немедленного применения.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The rector, A. Smith, approved this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The rector, A. B. Smith, approved this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Rektor A. Karimov ushbu hujjatni tasdiqladi va kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Rektor A. B. Karimov ushbu hujjatni tasdiqladi va kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Директор И. Иванов утвердил этот документ для немедленного применения.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Директор И. И. Иванов утвердил этот документ для применения.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The rector, Rev. Smith, approved this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "This document was approved by Rev. Smith, the rector after review.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Rektor, dots. Karimov, ushbu hujjatni tasdiqladi va kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Ushbu hujjatni tasdiqladi dots. Karimov, rektor, batafsil ko‘rib chiqib.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Директор, проф. Иванов, утвердил этот документ для применения.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Этот документ утвердил проф. Иванов, директор, после проверки.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The dіrесtor approved this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "This document was аррrоved by the director after review.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Dіrекtor ushbu hujjatni tasdiqladi va kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Ushbu hujjatni tаѕdіqladi direktor va kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Диpeктoр утвердил этот документ для немедленного применения.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Этот документ yтвepдил директор после проверки.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The rector, Dr. Smith, approved this document for immediate use.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "This document was approved by Prof. Smith, the rector after review.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Rektor, dots. Karimov, ushbu hujjatni tasdiqladi va kuchga kiritdi.",
+            "language": "uz",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "Этот документ утвердил проф. Иванов, директор, после проверки.",
+            "language": "ru",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The rector, Alex Smith, Ph.D., approved this document after review.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "This document was approved by Alex Smith, M.D., the rector after review.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "The rector, Alex Smith, B.Sc., approved this document after review.",
+            "language": "en",
+        },
+        {
+            "document_type": "official_letter",
+            "details": "This document was approved by Alex Smith, M.Sc., the rector after review.",
+            "language": "en",
+        },
+    ],
+)
+async def test_document_unsafe_or_malformed_input_creates_no_durable_state(
+    service_order_db, monkeypatch, payload: dict[str, object]
+) -> None:  # type: ignore[no-untyped-def]
+    provider_call = AsyncMock(side_effect=AssertionError("provider must not be called"))
+    monkeypatch.setattr(MockAIProvider, "generate_document", provider_call)
+    async with service_order_db() as session:
+        with pytest.raises(ValueError):
+            await ServiceOrderService().create_document_order(
+                session,
+                telegram_user_id=777,
+                request_payload=payload,
+                idempotency_key="document-rejected-before-order",
+            )
+        order_count = await session.scalar(select(func.count(ServiceOrder.id)))
+        outbox_count = await session.scalar(select(func.count(OutboxEvent.id)))
+        artifact_count = await session.scalar(
+            select(func.count(ServiceOrder.id)).where(
+                (ServiceOrder.docx_storage_key.is_not(None))
+                | (ServiceOrder.pdf_storage_key.is_not(None))
+            )
+        )
+        delivery_count = await session.scalar(
+            select(func.count(ServiceOrder.id)).where(
+                (ServiceOrder.docx_telegram_message_id.is_not(None))
+                | (ServiceOrder.pdf_telegram_message_id.is_not(None))
+                | (ServiceOrder.delivered_at.is_not(None))
+            )
+        )
+
+    assert order_count == 0
+    assert outbox_count == 0
+    assert artifact_count == 0
+    assert delivery_count == 0
+    assert provider_call.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -473,3 +982,312 @@ async def test_service_artifact_retrieval_rejects_int64_overflow_callback(
     callback.answer.assert_awaited_once_with()
     callback.message.answer_document.assert_not_awaited()
     build_storage.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector Dr. Smith approved this document after review."),
+        ("en", "The rector met Dr. Smith approved this document after review."),
+        ("en", "This document was approved by Prof. Alice Smith the rector after review."),
+        ("uz", "Rektor dots. Ali Karimov ushbu hujjatni tasdiqladi va kuchga kiritdi."),
+        ("uz", "Ushbu hujjatni tasdiqladi dots. Ali Karimov rektor batafsil ko‘rib chiqib."),
+        ("ru", "Директор проф. Иван Иванов утвердил этот документ после проверки."),
+        ("ru", "Этот документ утвердил проф. Иван Иванов директор после проверки."),
+    ],
+)
+async def test_document_bounded_title_name_rejects_with_zero_state(
+    service_order_db, monkeypatch, language: str, details: str
+) -> None:  # type: ignore[no-untyped-def]
+    provider_call = AsyncMock(side_effect=AssertionError("provider must not be called"))
+    monkeypatch.setattr(MockAIProvider, "generate_document", provider_call)
+    async with service_order_db() as session:
+        with pytest.raises(ValueError):
+            await ServiceOrderService().create_document_order(
+                session,
+                telegram_user_id=777,
+                request_payload={
+                    "document_type": "official_letter",
+                    "details": details,
+                    "language": language,
+                },
+                idempotency_key="document-bounded-title-name-rejected",
+            )
+        order_count = await session.scalar(select(func.count(ServiceOrder.id)))
+        outbox_count = await session.scalar(select(func.count(OutboxEvent.id)))
+        artifact_count = await session.scalar(
+            select(func.count(ServiceOrder.id)).where(
+                (ServiceOrder.docx_storage_key.is_not(None))
+                | (ServiceOrder.pdf_storage_key.is_not(None))
+            )
+        )
+        delivery_count = await session.scalar(
+            select(func.count(ServiceOrder.id)).where(
+                (ServiceOrder.docx_telegram_message_id.is_not(None))
+                | (ServiceOrder.pdf_telegram_message_id.is_not(None))
+                | (ServiceOrder.delivered_at.is_not(None))
+            )
+        )
+    assert order_count == outbox_count == artifact_count == delivery_count == 0
+    assert provider_call.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector met Dr. This document was approved by the committee after review."),
+        ("en", "The rector met Prof. That document was approved by the committee after review."),
+        ("uz", "Rektor dots. Ushbu hujjat komissiya tomonidan tasdiqlandi."),
+        ("ru", "Директор встретил проф. Это документ утвердила комиссия."),
+        ("ru", "Директор встретил проф. Этот документ утвердила комиссия."),
+    ],
+)
+async def test_document_sentence_opener_after_title_creates_isolated_order(
+    service_order_db, language: str, details: str
+) -> None:  # type: ignore[no-untyped-def]
+    async with service_order_db() as session:
+        order = await ServiceOrderService().create_document_order(
+            session,
+            telegram_user_id=777,
+            request_payload={
+                "document_type": "official_letter",
+                "details": details,
+                "language": language,
+            },
+            idempotency_key="document-title-sentence-opener",
+        )
+        order_count = await session.scalar(select(func.count(ServiceOrder.id)))
+        outbox_count = await session.scalar(select(func.count(OutboxEvent.id)))
+    assert order.normalized_request["details"] == details
+    assert order_count == outbox_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The dжrector approved the meeting agenda after committee review."),
+        ("en", "The dжrесtor approved the meeting agenda after committee review."),
+        ("uz", "Tжsdiq jarayoni direktor ishtirok etgan yig‘ilishda muhokama qilindi."),
+        ("ru", "Директор уxвердил только расписание планового заседания комиссии."),
+    ],
+)
+async def test_document_unrelated_cross_script_control_creates_isolated_order(
+    service_order_db, language: str, details: str
+) -> None:  # type: ignore[no-untyped-def]
+    async with service_order_db() as session:
+        order = await ServiceOrderService().create_document_order(
+            session,
+            telegram_user_id=777,
+            request_payload={
+                "document_type": "official_letter",
+                "details": details,
+                "language": language,
+            },
+            idempotency_key="document-unrelated-confusable-control",
+        )
+        order_count = await session.scalar(select(func.count(ServiceOrder.id)))
+        outbox_count = await session.scalar(select(func.count(OutboxEvent.id)))
+    assert order.normalized_request["details"] == details
+    assert order_count == outbox_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector said: “Done.”))) This document was approved by committee."),
+        ("en", "This document was approved by committee. «Done.»]))) The rector attended later."),
+        ("uz", "Rektor aytdi: «Tayyor.»]))) Bu hujjat komissiya tomonidan tasdiqlandi."),
+        ("uz", "Hujjat komissiya tomonidan tasdiqlandi. «Tayyor.»]))) Rektor keyin qatnashdi."),
+        ("ru", "Директор сказал: «Готово.»]))) Этот документ утвердила комиссия."),
+        ("ru", "Документ утвердила комиссия. «Готово.»]))) Директор пришёл позже."),
+    ],
+)
+async def test_document_many_closing_delimiters_create_isolated_order(
+    service_order_db, language: str, details: str
+) -> None:  # type: ignore[no-untyped-def]
+    async with service_order_db() as session:
+        order = await ServiceOrderService().create_document_order(
+            session,
+            telegram_user_id=777,
+            request_payload={
+                "document_type": "official_letter",
+                "details": details,
+                "language": language,
+            },
+            idempotency_key="document-many-closing-delimiters",
+        )
+        order_count = await session.scalar(select(func.count(ServiceOrder.id)))
+        outbox_count = await session.scalar(select(func.count(OutboxEvent.id)))
+    assert order.normalized_request["details"] == details
+    assert order_count == outbox_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector, D.Phil. approved this document after review."),
+        ("en", "This document was approved by Alex Smith, Ed.D., the rector after review."),
+        ("uz", "Rektor, LL.M. ushbu hujjatni tasdiqladi va kuchga kiritdi."),
+        ("uz", "Ushbu hujjatni tasdiqladi Ali Karimov, MBA., rektor batafsil ko‘rib chiqib."),
+        ("ru", "Директор, D.Phil. утвердил этот документ после проверки."),
+        ("ru", "Этот документ утвердил Иван Иванов, Ed.D., директор после проверки."),
+    ],
+)
+async def test_document_bounded_degree_authority_rejects_with_zero_state(
+    service_order_db, monkeypatch, language: str, details: str
+) -> None:  # type: ignore[no-untyped-def]
+    provider_call = AsyncMock(side_effect=AssertionError("provider must not be called"))
+    monkeypatch.setattr(MockAIProvider, "generate_document", provider_call)
+    async with service_order_db() as session:
+        with pytest.raises(ValueError):
+            await ServiceOrderService().create_document_order(
+                session,
+                telegram_user_id=777,
+                request_payload={
+                    "document_type": "official_letter",
+                    "details": details,
+                    "language": language,
+                },
+                idempotency_key="document-bounded-degree-rejected",
+            )
+        order_count = await session.scalar(select(func.count(ServiceOrder.id)))
+        outbox_count = await session.scalar(select(func.count(OutboxEvent.id)))
+        artifact_count = await session.scalar(
+            select(func.count(ServiceOrder.id)).where(
+                (ServiceOrder.docx_storage_key.is_not(None))
+                | (ServiceOrder.pdf_storage_key.is_not(None))
+            )
+        )
+        delivery_count = await session.scalar(
+            select(func.count(ServiceOrder.id)).where(
+                (ServiceOrder.docx_telegram_message_id.is_not(None))
+                | (ServiceOrder.pdf_telegram_message_id.is_not(None))
+                | (ServiceOrder.delivered_at.is_not(None))
+            )
+        )
+    assert order_count == outbox_count == artifact_count == delivery_count == 0
+    assert provider_call.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The rector A. B. C. D. Smith approved this document after review."),
+        ("uz", "Rektor A. B. C. D. E. F. G. H. Karimov ushbu hujjatni tasdiqladi."),
+        ("ru", "Директор И. И. И. И. И. И. И. И. Иванов утвердил этот документ."),
+        ("en", "The rector A. B. C. D. E. F. G. H. I. Smith approved this document."),
+    ],
+)
+async def test_document_initial_run_authority_rejects_with_zero_state(
+    service_order_db, monkeypatch, language: str, details: str
+) -> None:  # type: ignore[no-untyped-def]
+    provider_call = AsyncMock(side_effect=AssertionError("provider must not be called"))
+    monkeypatch.setattr(MockAIProvider, "generate_document", provider_call)
+    async with service_order_db() as session:
+        with pytest.raises(ValueError):
+            await ServiceOrderService().create_document_order(
+                session,
+                telegram_user_id=777,
+                request_payload={
+                    "document_type": "official_letter",
+                    "details": details,
+                    "language": language,
+                },
+                idempotency_key="document-initial-run-rejected",
+            )
+        order_count = await session.scalar(select(func.count(ServiceOrder.id)))
+        outbox_count = await session.scalar(select(func.count(OutboxEvent.id)))
+        artifact_count = await session.scalar(
+            select(func.count(ServiceOrder.id)).where(
+                (ServiceOrder.docx_storage_key.is_not(None))
+                | (ServiceOrder.pdf_storage_key.is_not(None))
+            )
+        )
+        delivery_count = await session.scalar(
+            select(func.count(ServiceOrder.id)).where(
+                (ServiceOrder.docx_telegram_message_id.is_not(None))
+                | (ServiceOrder.pdf_telegram_message_id.is_not(None))
+                | (ServiceOrder.delivered_at.is_not(None))
+            )
+        )
+    assert order_count == outbox_count == artifact_count == delivery_count == 0
+    assert provider_call.await_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The dіrectorж approved the meeting agenda after committee review."),
+        ("uz", "Direktor tаѕdіqж jarayonini yig‘ilishda batafsil muhokama qildi."),
+    ],
+)
+async def test_document_unrelated_confusable_suffix_creates_isolated_order(
+    service_order_db, language: str, details: str
+) -> None:  # type: ignore[no-untyped-def]
+    async with service_order_db() as session:
+        order = await ServiceOrderService().create_document_order(
+            session,
+            telegram_user_id=777,
+            request_payload={
+                "document_type": "official_letter",
+                "details": details,
+                "language": language,
+            },
+            idempotency_key="document-unrelated-confusable-suffix",
+        )
+        order_count = await session.scalar(select(func.count(ServiceOrder.id)))
+        outbox_count = await session.scalar(select(func.count(OutboxEvent.id)))
+    assert order.normalized_request["details"] == details
+    assert order_count == outbox_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("language", "details"),
+    [
+        ("en", "The dіrectors approved this document for immediate use."),
+        ("uz", "Dіrекtorlar ushbu hujjatni tasdiqladi va kuchga kiritdi."),
+        ("ru", "Диpeктoры утвердили этот документ для немедленного применения."),
+    ],
+)
+async def test_document_confusable_role_morphology_rejects_with_zero_state(
+    service_order_db, monkeypatch, language: str, details: str
+) -> None:  # type: ignore[no-untyped-def]
+    provider_call = AsyncMock(side_effect=AssertionError("provider must not be called"))
+    monkeypatch.setattr(MockAIProvider, "generate_document", provider_call)
+    async with service_order_db() as session:
+        with pytest.raises(ValueError):
+            await ServiceOrderService().create_document_order(
+                session,
+                telegram_user_id=777,
+                request_payload={
+                    "document_type": "official_letter",
+                    "details": details,
+                    "language": language,
+                },
+                idempotency_key="document-confusable-role-morphology-rejected",
+            )
+        order_count = await session.scalar(select(func.count(ServiceOrder.id)))
+        outbox_count = await session.scalar(select(func.count(OutboxEvent.id)))
+        artifact_count = await session.scalar(
+            select(func.count(ServiceOrder.id)).where(
+                (ServiceOrder.docx_storage_key.is_not(None))
+                | (ServiceOrder.pdf_storage_key.is_not(None))
+            )
+        )
+        delivery_count = await session.scalar(
+            select(func.count(ServiceOrder.id)).where(
+                (ServiceOrder.docx_telegram_message_id.is_not(None))
+                | (ServiceOrder.pdf_telegram_message_id.is_not(None))
+                | (ServiceOrder.delivered_at.is_not(None))
+            )
+        )
+    assert order_count == outbox_count == artifact_count == delivery_count == 0
+    assert provider_call.await_count == 0

@@ -116,6 +116,7 @@ def service_confirmation_keyboard(
                         ServiceType.WRITE_TEXT,
                         ServiceType.REWRITE,
                         ServiceType.TRANSLATE,
+                        ServiceType.DOCUMENT,
                     }
                     else "service.submit",
                 ),

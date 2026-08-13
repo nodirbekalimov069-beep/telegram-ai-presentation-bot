@@ -20,6 +20,12 @@ from modules.ai.course_work_contracts import (
     requested_course_sections,
     validate_course_work_against_request,
 )
+from modules.ai.document_contracts import (
+    DocumentGenerationRequest,
+    DocumentSelection,
+    materialize_document_selection,
+    source_document_units,
+)
 from modules.ai.essay_contracts import (
     EssayDocument,
     EssayGenerationRequest,
@@ -785,6 +791,15 @@ class MockAIProvider:
             segments=segments,
         )
         return materialize_and_validate_rewrite(selection, request=request)
+
+    async def generate_document(self, request: DocumentGenerationRequest):  # type: ignore[no-untyped-def]
+        units = source_document_units(request.details)
+        selection = DocumentSelection(
+            document_type=request.document_type,
+            language=request.language,
+            source_indices=list(range(len(units))),
+        )
+        return materialize_document_selection(selection, request=request)
 
     async def generate_translation(self, request: TranslationGenerationRequest):  # type: ignore[no-untyped-def]
         source_language = source_language_for_request(request)

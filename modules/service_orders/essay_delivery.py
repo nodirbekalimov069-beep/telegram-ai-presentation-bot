@@ -111,6 +111,11 @@ _CAPTIONS = {
         "ru": {"docx": "✅ Перевод готов — DOCX", "pdf": "✅ Перевод готов — PDF"},
         "en": {"docx": "✅ Translation ready — DOCX", "pdf": "✅ Translation ready — PDF"},
     },
+    ServiceType.DOCUMENT: {
+        "uz": {"docx": "✅ Hujjat tayyor — DOCX", "pdf": "✅ Hujjat tayyor — PDF"},
+        "ru": {"docx": "✅ Документ готов — DOCX", "pdf": "✅ Документ готов — PDF"},
+        "en": {"docx": "✅ Document ready — DOCX", "pdf": "✅ Document ready — PDF"},
+    },
 }
 
 
@@ -559,6 +564,24 @@ class TelegramTranslationDelivery(TelegramEssayDelivery):
         )
 
 
+class TelegramDocumentDelivery(TelegramEssayDelivery):
+    def __init__(
+        self,
+        *,
+        storage: Storage,
+        work_root: Path,
+        max_upload_bytes: int = 49_000_000,
+        lease_seconds: int = 300,
+    ) -> None:
+        super().__init__(
+            storage=storage,
+            work_root=work_root,
+            max_upload_bytes=max_upload_bytes,
+            lease_seconds=lease_seconds,
+            service_type=ServiceType.DOCUMENT,
+        )
+
+
 async def mark_terminal_document_delivery_failure(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -676,4 +699,14 @@ async def mark_terminal_translation_delivery_failure(
         session_factory,
         service_order_id=service_order_id,
         service_type=ServiceType.TRANSLATE,
+    )
+
+
+async def mark_terminal_document_service_delivery_failure(
+    session_factory: async_sessionmaker[AsyncSession], *, service_order_id: int
+) -> bool:
+    return await mark_terminal_document_delivery_failure(
+        session_factory,
+        service_order_id=service_order_id,
+        service_type=ServiceType.DOCUMENT,
     )

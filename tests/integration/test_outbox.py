@@ -58,7 +58,17 @@ async def test_outbox_enqueue_is_idempotent_and_dispatches_once(tmp_path: Path) 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "service_name",
-    ["essay", "independent", "course", "summary", "quiz", "write", "rewrite", "translate"],
+    [
+        "essay",
+        "independent",
+        "course",
+        "summary",
+        "quiz",
+        "write",
+        "rewrite",
+        "translate",
+        "document",
+    ],
 )
 async def test_cleanup_outbox_never_dies_during_broker_outage(
     tmp_path: Path, service_name: str
@@ -103,7 +113,17 @@ async def test_cleanup_outbox_never_dies_during_broker_outage(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "service_name",
-    ["essay", "independent", "course", "summary", "quiz", "write", "rewrite", "translate"],
+    [
+        "essay",
+        "independent",
+        "course",
+        "summary",
+        "quiz",
+        "write",
+        "rewrite",
+        "translate",
+        "document",
+    ],
 )
 async def test_cleanup_outbox_never_dies_when_publisher_is_not_registered(
     tmp_path: Path, service_name: str

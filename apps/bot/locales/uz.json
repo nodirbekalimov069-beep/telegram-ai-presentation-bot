@@ -210,6 +210,7 @@
   "orders.write_artifact_caption": "📎 Matn — {artifact}",
   "orders.rewrite_artifact_caption": "📎 Qayta yozilgan matn — {artifact}",
   "orders.translate_artifact_caption": "📎 Tarjima — {artifact}",
+  "orders.document_artifact_caption": "📎 Hujjat — {artifact}",
   "service.quiz_notice": "🧠 Quiz mavzusini kiriting. Generatsiya faqat ✅ Tayyorlashni bosganingizdan keyin boshlanadi.",
   "service.quiz_created": "⏳ Quizingiz tayyorlanmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi.",
   "service.write_notice": "✍️ Matn mavzusini kiriting. Generatsiya faqat ✅ Tayyorlashni bosganingizdan keyin boshlanadi.",
@@ -217,5 +218,11 @@
   "service.rewrite_notice": "🔄 Manba matn tanlangan usulda xavfsiz qayta yoziladi. AI faqat ✅ Tayyorlash bosilgandan keyin ishlaydi.",
   "service.rewrite_created": "⏳ Matningiz qayta yozilmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi.",
   "service.translate_notice": "🌐 AI yordamida yuqori ishonchli tarjima. Muhim ism, raqam, sana, summa va formatlar tekshiriladi; noaniq yoki qarama-qarshi natija chiqarilmaydi. Bu professional yoki sertifikatlangan yuridik/tibbiy tarjima kafolati emas. AI faqat ✅ Tayyorlash bosilgandan keyin ishlaydi.",
-  "service.translate_created": "⏳ Matningiz tarjima qilinmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi."
+  "service.translate_created": "⏳ Matningiz tarjima qilinmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va tekshirilgan PDF yuboriladi.",
+  "service.option.application": "Ariza",
+  "service.option.explanation": "Tushuntirish xati",
+  "service.option.autobiography": "Tarjimai hol",
+  "service.option.official_letter": "Rasmiy xat loyihasi",
+  "service.document_notice": "📄 Faqat siz bergan ma’lumotlardan tahrirlanadigan hujjat loyihasi tayyorlanadi. AI tekshirilmagan fakt, manba, imzo, muhr, sertifikat, rasmiy tasdiq yoki yuridik vakolat qo‘shmaydi. Natija yuridik maslahat yoki sertifikatlangan hujjat o‘rnini bosmaydi; taqdim etishdan oldin tekshiring. AI faqat ✅ Tayyorlash bosilgandan keyin ishlaydi.",
+  "service.document_created": "⏳ Hujjat loyihangiz tayyorlanmoqda. Tayyor bo‘lgach tahrirlanadigan DOCX va aniq tekshirilgan PDF yuboriladi."
 }

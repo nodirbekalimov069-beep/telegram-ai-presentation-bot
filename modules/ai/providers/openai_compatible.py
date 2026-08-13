@@ -37,6 +37,14 @@ from modules.ai.course_work_contracts import (
     build_course_work_messages,
     materialize_and_validate_course_work,
 )
+from modules.ai.document_contracts import (
+    DocumentGenerationRequest,
+    DocumentSelection,
+    PreparedDocument,
+    build_document_messages,
+    materialize_document_selection,
+    validate_document_selection,
+)
 from modules.ai.essay_contracts import (
     EssayDocument,
     EssayGenerationRequest,
@@ -561,6 +569,18 @@ class OpenAICompatibleProvider:
                 ) from exc
             return materialize_and_validate_translation(selection, request=request)
         raise AIContractError("translation semantic risk validation failed") from last_risk_error
+
+    async def generate_document(self, request: DocumentGenerationRequest) -> PreparedDocument:
+        selection = await self._request_structured(
+            messages=cast(
+                Iterable[ChatCompletionMessageParam],
+                build_document_messages(request),
+            ),
+            response_format=DocumentSelection,
+            response_validator=partial(validate_document_selection, request=request),
+            temperature=0.0,
+        )
+        return materialize_document_selection(selection, request=request)
 
     async def _request_json_object(
         self,

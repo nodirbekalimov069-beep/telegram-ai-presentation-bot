@@ -9,6 +9,7 @@ from modules.ai.contracts import (
     PresentationRequest,
 )
 from modules.ai.course_work_contracts import CourseWorkDocument, CourseWorkGenerationRequest
+from modules.ai.document_contracts import DocumentGenerationRequest, PreparedDocument
 from modules.ai.essay_contracts import EssayDocument, EssayGenerationRequest
 from modules.ai.independent_work_contracts import (
     IndependentWorkDocument,
@@ -49,3 +50,5 @@ class AIProvider(Protocol):
     async def generate_translation(
         self, request: TranslationGenerationRequest
     ) -> TranslationDocument: ...
+
+    async def generate_document(self, request: DocumentGenerationRequest) -> PreparedDocument: ...

@@ -56,6 +56,10 @@ DOCUMENT_SERVICE_PROFILES = {
         service_type=ServiceType.TRANSLATE,
         artifact_stem="tarjima",
     ),
+    ServiceType.DOCUMENT: DocumentServiceProfile(
+        service_type=ServiceType.DOCUMENT,
+        artifact_stem="hujjat",
+    ),
 }
 PRODUCTION_DOCUMENT_SERVICE_TYPES = frozenset(
     service_type.value for service_type in DOCUMENT_SERVICE_PROFILES

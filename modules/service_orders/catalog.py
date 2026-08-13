@@ -6,6 +6,7 @@ from types import MappingProxyType
 from typing import Any
 
 from modules.ai.rewrite_contracts import RewriteGenerationRequest, detect_rewrite_language
+from modules.ai.document_contracts import DocumentGenerationRequest
 from modules.ai.translation_contracts import TranslationGenerationRequest
 from modules.ai.write_text_contracts import (
     validate_write_text_untrusted_input,
@@ -182,9 +183,11 @@ _SERVICE_CATALOG = {
                 "document_type",
                 ("application", "explanation", "autobiography", "official_letter", "other"),
             ),
-            _text("details", maximum=2000),
+            _text("details", minimum=20, maximum=4000),
+            _LANGUAGE,
         ),
         "document_type",
+        production_ready=True,
     ),
 }
 SERVICE_CATALOG = MappingProxyType(_SERVICE_CATALOG)
@@ -241,7 +244,9 @@ def validate_service_request(
                 normalized[field.name] = ""
                 continue
             raise ValueError(f"{field.name} is required")
-        if canonical_type is ServiceType.TRANSLATE and not isinstance(payload[field.name], str):
+        if canonical_type in {ServiceType.TRANSLATE, ServiceType.DOCUMENT} and not isinstance(
+            payload[field.name], str
+        ):
             raise ValueError(f"{field.name} must be a string")
         normalized_value = _normalize_field(field, payload[field.name])
         normalized[field.name] = _validate_service_field_semantics(
@@ -251,6 +256,8 @@ def validate_service_request(
         return RewriteGenerationRequest(**normalized).model_dump()
     if canonical_type is ServiceType.TRANSLATE:
         return TranslationGenerationRequest(**normalized).model_dump()
+    if canonical_type is ServiceType.DOCUMENT:
+        return DocumentGenerationRequest(**normalized).model_dump()
     return normalized
 
 
@@ -264,7 +271,7 @@ def validate_field_value(
     field = next((item for item in definition.fields if item.name == field_name), None)
     if field is None:
         raise ValueError("unknown service field")
-    if canonical_type is ServiceType.TRANSLATE and not isinstance(raw, str):
+    if canonical_type in {ServiceType.TRANSLATE, ServiceType.DOCUMENT} and not isinstance(raw, str):
         raise ValueError(f"{field.name} must be a string")
     normalized = _normalize_field(field, raw)
     return _validate_service_field_semantics(canonical_type, field_name, normalized)
