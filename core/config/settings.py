@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     semantic_risk_model_dir: Path = Path("models/multilingual-nli")
     semantic_risk_timeout_seconds: float = Field(default=10.0, gt=0, le=30, allow_inf_nan=False)
 
-    payment_provider: Literal["mock", "click", "payme"] = "mock"
+    payment_provider: Literal["mock", "disabled", "click", "payme"] = "mock"
     mock_payment_secret: SecretStr = SecretStr("development-mock-secret")
     click_merchant_id: SecretStr = SecretStr("")
     click_service_id: SecretStr = SecretStr("")
@@ -128,13 +128,23 @@ class Settings(BaseSettings):
             raise ValueError("AI_API_KEY is required for the configured AI provider")
         if self.payment_provider == "mock":
             raise ValueError("mock payments must not be enabled in production")
+        if self.payment_provider == "disabled" and (
+            not self.bot_private_mode
+            or self.owner_telegram_id is None
+            or self.owner_telegram_id <= 0
+        ):
+            raise ValueError(
+                "disabled payment requires BOT_PRIVATE_MODE=true and a valid OWNER_TELEGRAM_ID"
+            )
         if self.payment_provider == "click" and not all(
             value.get_secret_value()
             for value in (self.click_merchant_id, self.click_service_id, self.click_secret_key)
         ):
             raise ValueError("Click credentials are required")
-        if self.payment_provider == "payme" and not all(
-            value.get_secret_value() for value in (self.payme_merchant_id, self.payme_secret_key)
+        if self.payment_provider == "payme" and not (
+            self.payme_merchant_id.get_secret_value()
+            and self.payme_login.strip()
+            and self.payme_secret_key.get_secret_value()
         ):
             raise ValueError("Payme credentials are required")
         if self.telegram_mode == "webhook":

@@ -8,6 +8,8 @@ from modules.payments.providers.payme import PaymeProvider
 
 
 def build_payment_provider(settings: Settings) -> PaymentProvider:
+    if settings.payment_provider == "disabled":
+        raise RuntimeError("payment provider is disabled")
     if settings.payment_provider == "mock":
         return MockPaymentProvider(
             secret=settings.mock_payment_secret.get_secret_value(),

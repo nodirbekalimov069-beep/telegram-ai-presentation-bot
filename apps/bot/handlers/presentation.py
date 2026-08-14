@@ -509,6 +509,9 @@ async def choose_plan(
     plan_code = resolve_choice(message.text, PLAN_CODES, localizer, language)
     if plan_code is None:
         return
+    if settings.payment_provider == "disabled" and plan_code != "free_demo":
+        await message.answer(localizer.text(language, "payment.disabled"))
+        return
     try:
         if plan_code == "free_demo":
             order = await FreeDemoService().claim(

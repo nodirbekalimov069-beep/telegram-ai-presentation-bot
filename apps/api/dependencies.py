@@ -30,7 +30,10 @@ def require_admin_header(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin required") from exc
     settings: Settings = request.app.state.settings
-    if telegram_user_id not in settings.admin_id_set:
+    if settings.app_env == "production" and settings.payment_provider == "disabled":
+        if telegram_user_id != settings.owner_telegram_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin required")
+    elif telegram_user_id not in settings.admin_id_set:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin required")
     configured_token = settings.admin_api_token.get_secret_value()
     if not configured_token or not authorization or not authorization.startswith("Bearer "):

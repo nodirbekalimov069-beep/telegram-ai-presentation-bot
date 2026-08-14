@@ -38,6 +38,85 @@ def test_production_rejects_mock_ai_provider() -> None:
         Settings(**_production_settings(ai_provider="mock", ai_api_key=SecretStr("")))
 
 
+def test_production_accepts_disabled_payment_only_for_private_owner_mode() -> None:
+    settings = Settings(**_production_settings(payment_provider="disabled"))
+
+    assert settings.payment_provider == "disabled"
+    assert settings.bot_private_mode is True
+    assert settings.owner_telegram_id == 42
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"payment_provider": "disabled", "bot_private_mode": False},
+        {"payment_provider": "disabled", "owner_telegram_id": None},
+        {"payment_provider": "disabled", "owner_telegram_id": 0},
+        {"payment_provider": "disabled", "owner_telegram_id": -1},
+    ],
+)
+def test_production_rejects_disabled_payment_without_private_owner_mode(
+    overrides: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError, match="disabled payment"):
+        Settings(**_production_settings(**overrides))
+
+
+def test_production_still_rejects_mock_payment() -> None:
+    with pytest.raises(ValidationError, match="mock payment"):
+        Settings(**_production_settings(payment_provider="mock"))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {
+            "payment_provider": "click",
+            "click_merchant_id": SecretStr(""),
+        },
+        {
+            "payment_provider": "click",
+            "click_service_id": SecretStr(""),
+        },
+        {
+            "payment_provider": "click",
+            "click_secret_key": SecretStr(""),
+        },
+        {
+            "payment_provider": "payme",
+            "payme_merchant_id": SecretStr(""),
+            "payme_login": "Paycom",
+            "payme_secret_key": SecretStr("payme-secret"),
+        },
+        {
+            "payment_provider": "payme",
+            "payme_merchant_id": SecretStr("merchant"),
+            "payme_login": "",
+            "payme_secret_key": SecretStr("payme-secret"),
+        },
+        {
+            "payment_provider": "payme",
+            "payme_merchant_id": SecretStr("merchant"),
+            "payme_login": "Paycom",
+            "payme_secret_key": SecretStr(""),
+        },
+    ],
+)
+def test_production_payment_credentials_remain_required(overrides: dict[str, object]) -> None:
+    with pytest.raises(ValidationError, match="credentials are required"):
+        Settings(**_production_settings(**overrides))
+
+
+def test_production_disabled_payment_still_requires_admin_token() -> None:
+    with pytest.raises(ValidationError, match="ADMIN_API_TOKEN"):
+        Settings(
+            **_production_settings(
+                payment_provider="disabled",
+                admin_api_token=SecretStr(""),
+            )
+        )
+
+
 @pytest.mark.parametrize("timeout", [0, -1, 301, float("inf"), float("-inf"), float("nan")])
 def test_ai_timeout_must_be_positive_finite_and_bounded(timeout: float) -> None:
     with pytest.raises(ValidationError, match="ai_timeout_seconds"):

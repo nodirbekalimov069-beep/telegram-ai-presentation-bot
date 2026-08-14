@@ -5,6 +5,8 @@ from urllib.parse import urlencode
 
 import pytest
 
+from core.config import Settings
+from modules.payments.factory import build_payment_provider
 from modules.payments.providers.click import ClickProvider, InvalidClickRequest
 from modules.payments.providers.payme import InvalidPaymeRequest, PaymeProvider
 
@@ -32,6 +34,11 @@ def signed_click_body(*, secret: str, action: str = "0", amount: str = "3000") -
     )
     fields["sign_string"] = hashlib.md5(preimage.encode()).hexdigest()  # noqa: S324
     return urlencode(fields).encode()
+
+
+def test_disabled_payment_factory_fails_closed_without_building_provider() -> None:
+    with pytest.raises(RuntimeError, match="payment provider is disabled"):
+        build_payment_provider(Settings(app_env="test", payment_provider="disabled"))
 
 
 def test_click_prepare_signature_and_integer_uzs_are_verified() -> None:
