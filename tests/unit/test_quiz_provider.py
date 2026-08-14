@@ -15,7 +15,7 @@ from modules.ai.quiz_contracts import (
     QuizDocument,
     QuizGenerationRequest,
     QuizQuestion,
-    build_quiz_retry_message,
+    build_quiz_messages,
 )
 
 
@@ -103,6 +103,25 @@ async def test_openai_provider_uses_strict_quiz_schema_and_validator() -> None:
     await provider.aclose()
 
 
+def test_quiz_initial_instruction_states_schema_and_semantic_invariants_explicitly() -> None:
+    request = QuizGenerationRequest(
+        topic="Algoritmik fikrlash",
+        question_count=2,
+        difficulty="medium",
+        option_count=4,
+        answer_key=True,
+        language="uz",
+    )
+
+    system = " ".join(build_quiz_messages(request)[0]["content"].casefold().split())
+
+    assert "correct_answer must exactly equal one option" in system
+    assert "options must remain unique after unicode normalization" in system
+    assert "exactly one defensible correct answer" in system
+    assert "each explanation must support the keyed correct_answer" in system
+    assert "return exactly one json object" in system
+
+
 async def test_quiz_schema_retry_emits_only_finite_static_correction() -> None:
     provider = OpenAICompatibleProvider(
         base_url="https://example.test/v1",
@@ -145,7 +164,8 @@ async def test_quiz_schema_retry_emits_only_finite_static_correction() -> None:
 
     emitted = parse.await_args_list[1].kwargs["messages"][-1]["content"]
     assert result is document
-    assert emitted == build_quiz_retry_message(str(captured.value))
+    assert "duplicate options" in emitted.casefold()
+    assert "one complete json object" in emitted.casefold()
     assert "quiz options must be unique" not in emitted
     await provider.aclose()
 
@@ -191,7 +211,9 @@ async def test_quiz_timeout_then_duplicate_feedback_produces_unique_questions_wi
     correction = parse.await_args_list[2].kwargs["messages"][-1]["content"]
     assert parse.await_count == 3
     assert parse.await_count <= 4
-    assert "Make every question text unique" in correction
+    assert "repeated a question" in correction
+    assert "Make every question unique" in correction
+    assert "options must be unique" not in correction.casefold()
     assert "quiz questions must be unique" not in correction
     assert (
         len({question.text.casefold() for question in result.questions}) == request.question_count

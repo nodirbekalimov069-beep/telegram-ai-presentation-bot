@@ -62,6 +62,7 @@ from modules.ai.quiz_contracts import (
     QuizGenerationRequest,
     build_quiz_messages,
     build_quiz_retry_message,
+    classify_quiz_semantic_reason,
     validate_quiz_against_request,
 )
 from modules.ai.rewrite_contracts import (
@@ -103,7 +104,11 @@ from modules.ai.presentation_agent import (
     AgentReply,
     build_agent_messages,
 )
-from modules.ai.providers.errors import ProviderCallBudgetExhausted, QuizRejectionCategory
+from modules.ai.providers.errors import (
+    ProviderCallBudgetExhausted,
+    QuizRejectionCategory,
+    QuizSemanticReason,
+)
 
 StructuredResponse = TypeVar("StructuredResponse", bound=BaseModel)
 _TRANSIENT_ERRORS = (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError)
@@ -119,15 +124,78 @@ def _classify_quiz_rejection(
     if schema_error is None:
         return QuizRejectionCategory.OTHER_INVALID
     summary = str(error).casefold()
-    if "duplicate" in summary or "unique" in summary:
+    if "duplicate" in summary or "unique" in summary or "questions ask the same fact" in summary:
         return QuizRejectionCategory.DUPLICATE
     if schema_error:
         return QuizRejectionCategory.SCHEMA_INVALID
     return QuizRejectionCategory.SEMANTIC_INVALID
 
 
-def _quiz_corrective_feedback(category: QuizRejectionCategory) -> str:
+_QUIZ_SEMANTIC_FEEDBACK = {
+    QuizSemanticReason.INVALID_CORRECT_ANSWER: (
+        "Invalid correct answer: make correct_answer exactly equal one and only one emitted option."
+    ),
+    QuizSemanticReason.AMBIGUOUS_CORRECT_ANSWER: (
+        "Ambiguous correct answer: make exactly one option defensibly correct and remove all/none "
+        "or overlapping alternatives."
+    ),
+    QuizSemanticReason.INVALID_OPTIONS: (
+        "Invalid options: emit exactly option_count non-empty, plausible, balanced options for "
+        "every question."
+    ),
+    QuizSemanticReason.DUPLICATE_OPTIONS: (
+        "Duplicate options: make every option unique after Unicode and whitespace normalization."
+    ),
+    QuizSemanticReason.DUPLICATE_QUESTION: (
+        "Duplicate question: make every question unique and materially different."
+    ),
+    QuizSemanticReason.QUESTION_ANSWER_MISMATCH: (
+        "Question answer mismatch: make the premises determine the keyed answer without revealing "
+        "it or disclosing another question's answer."
+    ),
+    QuizSemanticReason.INVALID_EXPLANATION: (
+        "Invalid explanation: explain positively why the keyed answer is correct without supporting, "
+        "repeating, or contradicting a distractor."
+    ),
+    QuizSemanticReason.LANGUAGE_MISMATCH: (
+        "Language mismatch: rewrite every authored block in the requested language using natural, "
+        "diverse vocabulary without mixed-language filler."
+    ),
+    QuizSemanticReason.MALFORMED_CONTENT: (
+        "Malformed content: rebuild the authored content to satisfy source-free safety, application "
+        "scenario, requirement, and prompt-leakage constraints."
+    ),
+    QuizSemanticReason.OTHER_SEMANTIC: (
+        "Other semantic: rebuild the quiz and satisfy every request-specific semantic invariant."
+    ),
+}
+
+
+def _quiz_corrective_feedback(
+    category: QuizRejectionCategory,
+    *,
+    semantic_reason: QuizSemanticReason | None = None,
+) -> str:
     """Return bounded category-only feedback; never include rejected content."""
+    if (
+        category is QuizRejectionCategory.DUPLICATE
+        and semantic_reason is QuizSemanticReason.DUPLICATE_QUESTION
+    ):
+        return (
+            "The previous response repeated a question. Make every question unique. Return one "
+            "complete JSON object only, with no text outside the structured output."
+        )
+    if semantic_reason is not None and (
+        category is QuizRejectionCategory.SEMANTIC_INVALID
+        or semantic_reason is not QuizSemanticReason.OTHER_SEMANTIC
+    ):
+        rule = _QUIZ_SEMANTIC_FEEDBACK[semantic_reason]
+        return (
+            f"The previous response was {category.value.replace('_', ' ')}. Reason: "
+            f"{semantic_reason.value.replace('_', ' ')}. {rule} Do not repeat any previous "
+            "question. Return one complete JSON object only, matching the required schema and "
+            "every requested constraint."
+        )
     return {
         QuizRejectionCategory.SCHEMA_INVALID: (
             "The previous response was schema invalid. Return one complete JSON object "
@@ -359,15 +427,20 @@ class OpenAICompatibleProvider:
                         f"{_validation_error_summary(exc)}"
                     ) from exc
                 category = QuizRejectionCategory.SCHEMA_INVALID
+                semantic_reason: QuizSemanticReason | None = None
                 if response_format is QuizDocument:
                     category = _classify_quiz_rejection(exc, schema_error=True)
+                    semantic_reason = classify_quiz_semantic_reason(exc)
                     await self._record_quiz_rejection(category, attempt=attempt + 1)
                 if attempt + 1 >= attempt_limit:
                     raise _StructuredResponseBudgetExhausted(
                         "AI provider repeatedly returned an invalid structured response"
                     ) from exc
                 if response_format is QuizDocument:
-                    correction_message = _quiz_corrective_feedback(category)
+                    correction_message = _quiz_corrective_feedback(
+                        category,
+                        semantic_reason=semantic_reason,
+                    )
                 else:
                     correction_message = (
                         "The previous response failed schema validation. "
@@ -445,6 +518,7 @@ class OpenAICompatibleProvider:
                     if not retry_invalid_response:
                         raise
                     category = QuizRejectionCategory.SEMANTIC_INVALID
+                    semantic_reason = classify_quiz_semantic_reason(exc)
                     if response_format is QuizDocument:
                         category = _classify_quiz_rejection(exc, schema_error=False)
                         await self._record_quiz_rejection(category, attempt=attempt + 1)
@@ -455,7 +529,10 @@ class OpenAICompatibleProvider:
                     if contract_retry_builder is not None:
                         correction = contract_retry_builder(str(exc))
                     elif response_format is QuizDocument:
-                        correction = _quiz_corrective_feedback(category)
+                        correction = _quiz_corrective_feedback(
+                            category,
+                            semantic_reason=semantic_reason,
+                        )
                     elif response_format.__name__ == WriteTextDocument.__name__:
                         correction = build_write_text_retry_message(str(exc))
                     else:

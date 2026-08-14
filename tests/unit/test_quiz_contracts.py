@@ -3,6 +3,9 @@ from pydantic import ValidationError
 
 from modules.ai.contracts import AIContractError
 from modules.ai.providers.mock import MockAIProvider
+from modules.ai.providers.errors import QuizRejectionCategory, QuizSemanticReason
+from modules.ai.providers.openai_compatible import _quiz_corrective_feedback
+import modules.ai.quiz_contracts as quiz_contracts
 from modules.ai.quiz_contracts import (
     QuizAnswer,
     QuizDocument,
@@ -109,6 +112,587 @@ def test_question_schema_rejects_duplicate_options_and_wrong_answer() -> None:
         )
     with pytest.raises(ValidationError, match="correct answer"):
         QuizQuestion(**question.model_copy(update={"correct_answer": "Mavjud emas"}).model_dump())
+
+
+def test_question_schema_rejects_duplicate_options_after_option_label_normalization() -> None:
+    question = _question(1)
+    payload = question.model_dump()
+    payload["options"] = [
+        "A) Vazifani bosqichlarga ajratish",
+        "B. Vazifani bosqichlarga ajratish",
+        question.options[2],
+        question.options[3],
+    ]
+    payload["correct_answer"] = payload["options"][0]
+
+    with pytest.raises(ValidationError, match="options must be unique"):
+        QuizQuestion.model_validate(payload)
+
+
+def test_validator_rejects_semantically_overlapping_correct_options_without_false_positive() -> (
+    None
+):
+    request = _request(additional_requirements=None)
+    base = _question(1)
+    ambiguous = base.model_copy(
+        update={
+            "options": [
+                "Vazifani bosqichlarga ajratish",
+                "Jarayon vazifasini bosqichlarga ajratish",
+                "Faqat taxmin bilan ishlash",
+                "Muammoni e’tiborsiz qoldirish",
+            ],
+            "correct_answer": "Vazifani bosqichlarga ajratish",
+        }
+    )
+    distinct = _question(2, suffix="safe").model_copy(
+        update={
+            "text": (
+                "Algoritmik fikrlashda natijani baholash uchun mustaqil nazorat "
+                "yondashuvi nega kerak?"
+            )
+        }
+    )
+    candidate = _document(
+        questions=[ambiguous, distinct],
+        requirement_evidence=[],
+    )
+
+    with pytest.raises(AIContractError, match="duplicate question semantic core overlap"):
+        validate_quiz_against_request(candidate, request)
+
+    assert validate_quiz_against_request(
+        _document(requirement_evidence=[]),
+        request,
+    )
+
+
+@pytest.mark.parametrize(
+    ("language", "left", "right"),
+    [
+        ("en", "Enable encryption", "Do not enable encryption"),
+        ("en", "Access is allowed", "Access is prohibited"),
+        ("en", "The value increases", "The value decreases"),
+        ("uz", "Shifrlashni yoqing", "Shifrlashni yoqmang"),
+        ("uz", "Kirishga ruxsat etiladi", "Kirish taqiqlanadi"),
+        ("uz", "Qiymat oshadi", "Qiymat kamayadi"),
+        ("ru", "Включить шифрование", "Не включать шифрование"),
+        ("ru", "Доступ разрешено", "Доступ запрещено"),
+        ("ru", "Значение увеличивается", "Значение уменьшается"),
+    ],
+)
+def test_semantic_option_overlap_preserves_reliably_opposite_polarity(
+    language: str,
+    left: str,
+    right: str,
+) -> None:
+    overlap = getattr(quiz_contracts, "options_semantically_overlap", None)
+    assert overlap is not None, "polarity-aware option overlap predicate is missing"
+    assert overlap(left, right, language=language) is False
+    assert overlap(right, left, language=language) is False
+
+
+@pytest.mark.parametrize(
+    ("language", "left", "right"),
+    [
+        ("en", "Enable encryption", "Enable data encryption"),
+        ("uz", "Vazifani bosqichlarga ajrating", "Jarayon vazifasini bosqichlarga ajrating"),
+        ("ru", "Включить шифрование", "Включить шифрование данных"),
+    ],
+)
+def test_semantic_option_overlap_still_rejects_materially_equivalent_options(
+    language: str,
+    left: str,
+    right: str,
+) -> None:
+    overlap = getattr(quiz_contracts, "options_semantically_overlap", None)
+    assert overlap is not None, "polarity-aware option overlap predicate is missing"
+    assert overlap(left, right, language=language) is True
+    assert overlap(right, left, language=language) is True
+
+
+def test_semantic_option_overlap_keeps_strict_behavior_for_unknown_polarity() -> None:
+    assert (
+        quiz_contracts.options_semantically_overlap(
+            "Enable encryption",
+            "Never enable encryption",
+            language="en",
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    ("language", "positive", "negative", "same_negative"),
+    [
+        (
+            "en",
+            "Enable encryption",
+            "Do not enable encryption",
+            "Do not enable data encryption",
+        ),
+        (
+            "uz",
+            "Shifrlashni yoqing",
+            "Shifrlashni yoqmang",
+            "Ma’lumot shifrlashni yoqmang",
+        ),
+        (
+            "ru",
+            "Включить шифрование",
+            "Не включать шифрование",
+            "Не включать шифрование данных",
+        ),
+    ],
+)
+def test_same_negative_options_are_not_opposites_and_remain_rejected(
+    language: str,
+    positive: str,
+    negative: str,
+    same_negative: str,
+) -> None:
+    classify = getattr(quiz_contracts, "classify_option_polarity", None)
+    opposite = getattr(quiz_contracts, "options_have_opposite_polarity", None)
+    assert classify is not None, "deterministic option polarity classifier is missing"
+    assert opposite is not None, "bounded opposite-polarity predicate is missing"
+
+    assert classify(positive, language=language) == "positive"
+    assert classify(negative, language=language) == "negative"
+    assert classify(same_negative, language=language) == "negative"
+    assert opposite(positive, negative, language=language) is True
+    assert (
+        quiz_contracts.options_semantically_overlap(positive, negative, language=language) is False
+    )
+    assert opposite(negative, same_negative, language=language) is False
+    assert (
+        quiz_contracts.options_semantically_overlap(
+            negative,
+            same_negative,
+            language=language,
+        )
+        is True
+    )
+
+
+def test_same_positive_and_distinct_options_have_bounded_overlap_decisions() -> None:
+    positive = "Enable encryption"
+    same_positive = "Enable data encryption"
+    distinct = "Create an offline backup"
+
+    assert (
+        quiz_contracts.options_have_opposite_polarity(
+            positive,
+            same_positive,
+            language="en",
+        )
+        is False
+    )
+    assert (
+        quiz_contracts.options_semantically_overlap(
+            positive,
+            same_positive,
+            language="en",
+        )
+        is True
+    )
+    assert quiz_contracts.classify_option_polarity(distinct, language="en") == "unknown"
+    assert (
+        quiz_contracts.options_have_opposite_polarity(
+            positive,
+            distinct,
+            language="en",
+        )
+        is False
+    )
+    assert (
+        quiz_contracts.options_semantically_overlap(
+            positive,
+            distinct,
+            language="en",
+        )
+        is False
+    )
+
+
+def test_validator_rejects_same_negative_semantic_duplicates() -> None:
+    request = _request(additional_requirements=None)
+    base = _question(1)
+    same_negative = base.model_copy(
+        update={
+            "options": [
+                "Shifrlashni yoqmang",
+                "Ma’lumot shifrlashni yoqmang",
+                "Faqat taxmin bilan ishlang",
+                "Muammoni e’tiborsiz qoldiring",
+            ],
+            "correct_answer": "Shifrlashni yoqmang",
+            "explanation": (
+                "Shifrlashni yoqmang qarori ushbu vaziyatda yechim jarayonini tekshirishga "
+                "imkon beradi."
+            ),
+        }
+    )
+    distinct = _question(2, suffix="mustaqil holat").model_copy(
+        update={
+            "text": (
+                "Algoritmik fikrlashda natijani mustaqil tahlil qilish uchun qaysi usul kerak?"
+            )
+        }
+    )
+
+    with pytest.raises(AIContractError, match="multiple semantically overlapping options"):
+        validate_quiz_against_request(
+            _document(
+                questions=[same_negative, distinct],
+                requirement_evidence=[],
+            ),
+            request,
+        )
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("Don't enable encryption", "Do not enable data encryption"),
+        ("Don’t enable encryption", "Do not enable data encryption"),
+        ("DON'T enable encryption", "do not enable data encryption"),
+        ("Cannot enable encryption", "Can't enable data encryption"),
+        ("Should not enable encryption", "Shouldn't enable data encryption"),
+        ("Must not enable encryption", "Mustn't enable data encryption"),
+    ],
+)
+def test_negative_contractions_preserve_same_negative_duplicate_rejection(
+    left: str,
+    right: str,
+) -> None:
+    assert quiz_contracts.classify_option_polarity(left, language="en") == "negative"
+    assert quiz_contracts.classify_option_polarity(right, language="en") == "negative"
+    assert quiz_contracts.options_have_opposite_polarity(left, right, language="en") is False
+    assert quiz_contracts.options_semantically_overlap(left, right, language="en") is True
+
+    request = _request(
+        topic="Encryption security",
+        question_count=1,
+        language="en",
+        additional_requirements=None,
+    )
+    question = QuizQuestion(
+        number=1,
+        text="Which policy is required for this encryption security scenario?",
+        options=[left, right, "Create an offline backup", "Rotate the access key"],
+        correct_answer=left,
+        explanation=(
+            f"{left} is the required policy because it preserves the specified security constraint."
+        ),
+        citation_indices=[],
+    )
+    document = QuizDocument(
+        title="Encryption security quiz",
+        topic="Encryption security",
+        language="en",
+        difficulty="medium",
+        show_answer_key=True,
+        instructions="Choose exactly one best answer for the security scenario.",
+        questions=[question],
+        answer_key=[QuizAnswer(question_number=1, correct_answer=left)],
+        requirement_evidence=[],
+        references=[],
+    )
+    with pytest.raises(AIContractError):
+        validate_quiz_against_request(document, request)
+
+
+@pytest.mark.parametrize(
+    "negative",
+    ["Don't enable encryption", "Cannot enable encryption"],
+)
+def test_contracted_negative_is_opposite_to_positive_control(negative: str) -> None:
+    positive = "Enable encryption"
+    assert quiz_contracts.classify_option_polarity(positive, language="en") == "positive"
+    assert quiz_contracts.classify_option_polarity(negative, language="en") == "negative"
+    assert (
+        quiz_contracts.options_have_opposite_polarity(
+            positive,
+            negative,
+            language="en",
+        )
+        is True
+    )
+    assert (
+        quiz_contracts.options_semantically_overlap(
+            positive,
+            negative,
+            language="en",
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    ("contraction", "expanded"),
+    [
+        ("don't", "do not"),
+        ("doesn't", "does not"),
+        ("didn't", "did not"),
+        ("can't", "cannot"),
+        ("couldn't", "could not"),
+        ("won't", "will not"),
+        ("wouldn't", "would not"),
+        ("shouldn't", "should not"),
+        ("mustn't", "must not"),
+        ("isn't", "is not"),
+        ("aren't", "are not"),
+        ("wasn't", "was not"),
+        ("weren't", "were not"),
+        ("hasn't", "has not"),
+        ("haven't", "have not"),
+        ("hadn't", "had not"),
+    ],
+)
+def test_closed_contraction_map_is_boundary_aware(
+    contraction: str,
+    expanded: str,
+) -> None:
+    canonicalize = getattr(quiz_contracts, "canonicalize_polarity_text", None)
+    assert canonicalize is not None, "bounded polarity canonicalizer is missing"
+    assert canonicalize(f"{contraction} enable encryption") == (f"{expanded} enable encryption")
+    assert canonicalize(f"prefix{contraction}suffix enable encryption") == (
+        f"prefix{contraction}suffix enable encryption"
+    )
+    contracted_option = f"{contraction} enable encryption"
+    expanded_option = f"{expanded} enable data encryption"
+    assert (
+        quiz_contracts.classify_option_polarity(
+            contracted_option,
+            language="en",
+        )
+        == "negative"
+    )
+    assert quiz_contracts.classify_option_polarity(expanded_option, language="en") == "negative"
+    assert (
+        quiz_contracts.options_have_opposite_polarity(
+            contracted_option,
+            expanded_option,
+            language="en",
+        )
+        is False
+    )
+    assert (
+        quiz_contracts.options_semantically_overlap(
+            contracted_option,
+            expanded_option,
+            language="en",
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "dont enable encryption",
+        "cant enable encryption",
+        "mustnt enable encryption",
+    ],
+)
+def test_apostropheless_contraction_tokens_keep_unknown_strict_fallback(text: str) -> None:
+    recognized_negative = "Do not enable data encryption"
+    assert quiz_contracts.classify_option_polarity(text, language="en") == "unknown"
+    assert (
+        quiz_contracts.options_have_opposite_polarity(
+            text,
+            recognized_negative,
+            language="en",
+        )
+        is False
+    )
+    assert (
+        quiz_contracts.options_semantically_overlap(
+            text,
+            recognized_negative,
+            language="en",
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize("text", ["enablement policy", "reenable encryption"])
+def test_positive_marker_substrings_remain_unknown(text: str) -> None:
+    assert quiz_contracts.classify_option_polarity(text, language="en") == "unknown"
+
+
+@pytest.mark.parametrize(
+    "left",
+    [
+        "Never enable encryption",
+        "Do not ever enable encryption",
+        "(Don't) enable encryption",
+        "prefixdon'tsuffix enable encryption",
+    ],
+)
+def test_ambiguous_negative_enablement_fails_closed_as_duplicate_question(left: str) -> None:
+    right = "Do not enable data encryption"
+    rejection_reason = getattr(quiz_contracts, "semantic_option_rejection_reason", None)
+    assert rejection_reason is not None, "bounded semantic option rejection seam is missing"
+
+    assert quiz_contracts.classify_option_polarity(left, language="en") != "positive"
+    assert quiz_contracts.options_have_opposite_polarity(left, right, language="en") is False
+    assert quiz_contracts.options_semantically_overlap(left, right, language="en") is True
+    assert rejection_reason(left, right, language="en") is QuizSemanticReason.DUPLICATE_QUESTION
+    assert (
+        quiz_contracts.classify_quiz_semantic_reason(
+            AIContractError("quiz has duplicate question semantic core overlap")
+        )
+        is QuizSemanticReason.DUPLICATE_QUESTION
+    )
+
+
+@pytest.mark.parametrize(
+    "left",
+    [
+        "Never enable encryption",
+        "Do not ever enable encryption",
+        "(Don't) enable encryption",
+        "prefixdon'tsuffix enable encryption",
+        "Do not really enable encryption",
+        "Do not ever actually enable encryption",
+        "Never actually enable encryption",
+    ],
+)
+def test_direct_validator_prioritizes_duplicate_question_for_unknown_polarity_core(
+    left: str,
+) -> None:
+    request = _request(language="en", additional_requirements=None)
+    base = _question(1)
+    right = "Do not enable data encryption"
+    duplicate = base.model_copy(
+        update={
+            "options": [
+                right,
+                left,
+                "Create an offline backup",
+                "Delete temporary logs",
+            ],
+            "correct_answer": right,
+            "explanation": None,
+        }
+    )
+    candidate = _document(
+        language="en",
+        questions=[duplicate, _question(2, suffix="safe")],
+        requirement_evidence=[],
+    )
+
+    with pytest.raises(AIContractError) as captured:
+        validate_quiz_against_request(candidate, request)
+
+    assert "duplicate question semantic core overlap" in str(captured.value)
+    assert (
+        quiz_contracts.classify_quiz_semantic_reason(captured.value)
+        is QuizSemanticReason.DUPLICATE_QUESTION
+    )
+
+
+def test_direct_validator_preserves_locale_rejection_for_distinct_options() -> None:
+    request = _request(language="en", additional_requirements=None)
+    base = _question(1)
+    distinct = base.model_copy(
+        update={
+            "options": [
+                "Enable encryption",
+                "Create an offline backup",
+                "Delete temporary logs",
+                "Rotate signing keys",
+            ],
+            "correct_answer": "Enable encryption",
+            "explanation": None,
+        }
+    )
+    candidate = _document(
+        language="en",
+        questions=[distinct, _question(2, suffix="safe")],
+        requirement_evidence=[],
+    )
+
+    with pytest.raises(AIContractError) as captured:
+        validate_quiz_against_request(candidate, request)
+
+    assert (
+        quiz_contracts.classify_quiz_semantic_reason(captured.value)
+        is QuizSemanticReason.LANGUAGE_MISMATCH
+    )
+
+
+def test_direct_validator_accepts_valid_distinct_options() -> None:
+    request = _request(additional_requirements=None)
+    assert validate_quiz_against_request(_document(requirement_evidence=[]), request)
+
+
+@pytest.mark.parametrize(
+    "left",
+    [
+        "Do not really enable encryption",
+        "Do not ever actually enable encryption",
+        "Never actually enable encryption",
+    ],
+)
+def test_closed_emphasis_tokens_preserve_unknown_semantic_core_overlap(left: str) -> None:
+    right = "Do not enable data encryption"
+
+    assert quiz_contracts.classify_option_polarity(left, language="en") == "unknown"
+    assert quiz_contracts.options_have_opposite_polarity(left, right, language="en") is False
+    assert quiz_contracts.options_semantically_overlap(left, right, language="en") is True
+    assert (
+        quiz_contracts.semantic_option_rejection_reason(left, right, language="en")
+        is QuizSemanticReason.DUPLICATE_QUESTION
+    )
+
+
+@pytest.mark.parametrize(
+    "left",
+    [
+        "Do not always enable encryption",
+        "Do not temporarily enable encryption",
+        "Never unreally enable encryption",
+        "Never actuality enable encryption",
+    ],
+)
+def test_nonreviewed_or_substring_modifiers_are_not_removed_from_semantic_core(left: str) -> None:
+    right = "Do not enable data encryption"
+
+    assert quiz_contracts.options_have_opposite_polarity(left, right, language="en") is False
+    assert quiz_contracts.options_semantically_overlap(left, right, language="en") is False
+    assert quiz_contracts.semantic_option_rejection_reason(left, right, language="en") is None
+
+
+def test_reviewed_emphasis_token_does_not_make_unrelated_core_duplicate() -> None:
+    left = "Never really create an offline backup"
+    right = "Do not enable data encryption"
+
+    assert quiz_contracts.options_have_opposite_polarity(left, right, language="en") is False
+    assert quiz_contracts.options_semantically_overlap(left, right, language="en") is False
+    assert quiz_contracts.semantic_option_rejection_reason(left, right, language="en") is None
+
+
+@pytest.mark.parametrize(
+    "left",
+    [
+        "Never enable archival encryption",
+        "Do not ever enable archival encryption",
+        "(Don't) enable archival encryption",
+        "prefixdon'tsuffix enable archival encryption",
+        "reenable archival encryption",
+        "enablement policy for archival encryption",
+    ],
+)
+def test_unknown_polarity_with_unrelated_semantic_core_is_not_duplicate(left: str) -> None:
+    right = "Create an offline backup"
+    rejection_reason = getattr(quiz_contracts, "semantic_option_rejection_reason", None)
+    assert rejection_reason is not None, "bounded semantic option rejection seam is missing"
+
+    assert quiz_contracts.options_have_opposite_polarity(left, right, language="en") is False
+    assert quiz_contracts.options_semantically_overlap(left, right, language="en") is False
+    assert rejection_reason(left, right, language="en") is None
 
 
 def test_document_schema_rejects_duplicate_questions_and_answer_key_drift() -> None:
@@ -427,6 +1011,18 @@ def test_quiz_retry_message_is_bounded_and_cannot_leak_to_artifacts() -> None:
     )
     with pytest.raises(AIContractError, match="instruction fragment"):
         assert_quiz_artifact_safe(split)
+
+
+def test_h6_semantic_correction_fragments_cannot_leak_to_artifacts() -> None:
+    correction = _quiz_corrective_feedback(
+        QuizRejectionCategory.SEMANTIC_INVALID,
+        semantic_reason=QuizSemanticReason.INVALID_EXPLANATION,
+    )
+    leaked = "Invalid explanation: explain positively why the keyed answer is correct"
+    assert leaked.casefold() in correction.casefold()
+
+    with pytest.raises(AIContractError, match="instruction fragment"):
+        assert_quiz_artifact_safe(_document(instructions=leaked, requirement_evidence=[]))
 
 
 def test_requirement_evidence_rejects_keyword_salad_without_coherent_application() -> None:
